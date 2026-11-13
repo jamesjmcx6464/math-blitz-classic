@@ -1,4 +1,9 @@
-export type MathMode = 'simple' | 'operator';
+/**
+ * - 'simple': operator auto-inserted (picked before play), fixed target.
+ * - 'operator': Equation mode, operators fall as tiles.
+ * - 'timestable': Times Table Blitz, auto × with a new 2-digit times-table target after every correct entry.
+ */
+export type MathMode = 'simple' | 'operator' | 'timestable';
 
 export type MathOperator = '+' | '−' | '×' | '÷';
 
@@ -108,7 +113,7 @@ export const DIFFICULTY_PRESETS: Record<DifficultyLevel, DifficultyConfig> = {
   beginner: {
     id: 'beginner',
     label: 'Beginner',
-    description: '+ − ÷ · Largest tiles',
+    description: '+ − ÷ · Equation: + − only',
     dropSpeed: 85,
     spawnIntervalMs: 2200,
     minSpawnIntervalMs: 900,

@@ -76,10 +76,16 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
 
         <div className="w-full bg-amber-50 border-4 border-amber-200 rounded-3xl p-5 mb-5 space-y-3">
           <div className="flex flex-wrap items-center justify-center gap-1.5 text-xs font-bold uppercase tracking-wider text-slate-600">
-            <span>Make {target}</span>
-            <span>·</span>
-            <span>{mathMode === 'operator' ? 'Equation Mode' : 'Simple Mode'}</span>
-            {operator && (
+            {mathMode === 'timestable' ? (
+              <span>Times Table Blitz</span>
+            ) : (
+              <>
+                <span>Make {target}</span>
+                <span>·</span>
+                <span>{mathMode === 'operator' ? 'Equation Mode' : 'Simple Mode'}</span>
+              </>
+            )}
+            {operator && mathMode !== 'timestable' && (
               <>
                 <span>·</span>
                 <span>{formatOperatorLabel(operator)}</span>

@@ -146,12 +146,33 @@
   will-change: transform;
 }
 
+/* Times Table Blitz: quick pop when a new target appears */
+@keyframes target-pop {
+  0% {
+    transform: scale(0.6);
+    color: #fcd34d;
+  }
+  55% {
+    transform: scale(1.35);
+    color: #fcd34d;
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+.animate-target-pop {
+  display: inline-block;
+  animation: target-pop 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
 /* Prefers-reduced-motion compliance for all animations */
 @media (prefers-reduced-motion: reduce) {
   .animate-hex-flash,
   .animate-shake,
   .animate-score-float,
-  .animate-letter-spring {
+  .animate-letter-spring,
+  .animate-target-pop {
     animation: none !important;
     transform: none !important;
   }

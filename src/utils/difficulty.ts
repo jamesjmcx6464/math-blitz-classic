@@ -38,7 +38,7 @@ export function saveDifficulty(level: DifficultyLevel): void {
 export function getSavedMathMode(): MathMode {
   try {
     const raw = localStorage.getItem(MATH_MODE_STORAGE_KEY);
-    if (raw === 'simple' || raw === 'operator') {
+    if (raw === 'simple' || raw === 'operator' || raw === 'timestable') {
       return raw;
     }
   } catch {

@@ -47,6 +47,84 @@ export function allowsNegativeIntermediates(difficulty: DifficultyLevel): boolea
   return DIFFICULTY_PRESETS[difficulty].allowNegativeIntermediates;
 }
 
+/** Simple mode and Times Table Blitz both auto-insert the operator between picked numbers. */
+export function isAutoOperatorMode(mathMode: MathMode): boolean {
+  return mathMode !== 'operator';
+}
+
+/** Times Table Blitz always multiplies; Simple mode uses the operator picked before play. */
+export function getEffectiveSimpleOperator(
+  mathMode: MathMode,
+  simpleOperator: MathOperator
+): MathOperator {
+  return mathMode === 'timestable' ? '×' : simpleOperator;
+}
+
+/** Equation mode on Beginner only uses + and −. */
+const EQUATION_MODE_BEGINNER_OPERATORS: MathOperator[] = ['+', '−'];
+
+/**
+ * Operators usable in the given math mode at this difficulty:
+ * - Times Table Blitz: × only.
+ * - Equation mode: the difficulty's operators (Beginner: + and − only).
+ * - Simple mode: the difficulty's operators (the picked one is auto-inserted).
+ */
+export function getModeOperators(difficulty: DifficultyLevel, mathMode: MathMode): MathOperator[] {
+  if (mathMode === 'timestable') return ['×'];
+  const allowed = getAllowedOperators(difficulty);
+  if (mathMode === 'operator' && difficulty === 'beginner') {
+    return allowed.filter((op) => EQUATION_MODE_BEGINNER_OPERATORS.includes(op));
+  }
+  return allowed;
+}
+
+// ============================================================================
+// TIMES TABLE BLITZ TARGETS
+// ============================================================================
+
+/** Two-digit products of the 1–10 times tables (10 … 90; 100 is excluded). */
+export const TIMES_TABLE_TARGETS: number[] = (() => {
+  const set = new Set<number>();
+  for (let a = 1; a <= 10; a++) {
+    for (let b = 1; b <= 10; b++) {
+      const p = a * b;
+      if (p >= 10 && p <= 99) set.add(p);
+    }
+  }
+  return Array.from(set).sort((x, y) => x - y);
+})();
+
+export const TIMES_TABLE_MAX_FACTOR = 10;
+
+/** True when two number tiles from `boardNumbers` multiply to `target` (each tile used once). */
+export function hasTimesTablePair(boardNumbers: number[], target: number): boolean {
+  const counts = new Map<number, number>();
+  for (const n of boardNumbers) counts.set(n, (counts.get(n) ?? 0) + 1);
+  for (const [a, cnt] of counts.entries()) {
+    if (a <= 0 || target % a !== 0) continue;
+    const b = target / a;
+    if (b === a ? cnt >= 2 : (counts.get(b) ?? 0) > 0) return true;
+  }
+  return false;
+}
+
+/**
+ * Picks the next Times Table Blitz target (never repeating `current`).
+ * Prefers targets that already have a valid pair on the board so play keeps flowing;
+ * otherwise picks any target and the Solvability Director spawns a helper tile.
+ */
+export function pickTimesTableTarget(params: {
+  current?: number;
+  boardNumbers?: number[];
+  rng?: () => number;
+}): number {
+  const { current, boardNumbers = [], rng = Math.random } = params;
+  const pool = TIMES_TABLE_TARGETS.filter((t) => t !== current);
+  const solvable = pool.filter((t) => hasTimesTablePair(boardNumbers, t));
+  const source = solvable.length > 0 ? solvable : pool;
+  return source[Math.floor(rng() * source.length)] ?? TIMES_TABLE_TARGETS[0];
+}
+
 export function isPrimeNumber(n: number): boolean {
   if (n < 2) return false;
   if (n === 2) return true;
@@ -413,10 +491,10 @@ export function evaluateEquation(
   ops: MathOperator[],
   options: EvaluateOptions
 ): EquationEvaluation {
-  const { difficulty, target, parenWraps } = options;
+  const { difficulty, mathMode, target, parenWraps } = options;
   const evalMode = getEvaluationMode(difficulty);
   const allowNeg = allowsNegativeIntermediates(difficulty);
-  const allowedOps = getAllowedOperators(difficulty);
+  const allowedOps = getModeOperators(difficulty, mathMode);
   const mulDivGroupRanges = evalMode === 'bedmas' ? getMulDivGroupRanges(ops) : [];
 
   const emptyFailure = (
@@ -458,7 +536,11 @@ export function evaluateEquation(
   }
   for (const op of ops) {
     if (!allowedOps.includes(op)) {
-      return emptyFailure(`"${op}" not allowed in ${DIFFICULTY_PRESETS[difficulty].label}`);
+      return emptyFailure(
+        mathMode === 'timestable'
+          ? `Only × in Times Table Blitz`
+          : `"${op}" not allowed in ${DIFFICULTY_PRESETS[difficulty].label}`
+      );
     }
   }
 
@@ -839,13 +921,131 @@ export interface WeightedNumberCandidate {
   weight: number; // normalized probabilities summing to 1
 }
 
-const OPERATOR_WEIGHTS_BY_DIFFICULTY: Record<DifficultyLevel, Record<MathOperator, number>> = {
-  beginner: { '+': 45, '−': 40, '×': 0, '÷': 15 },
-  easy: { '+': 35, '−': 25, '×': 25, '÷': 15 },
-  normal: { '+': 30, '−': 25, '×': 30, '÷': 15 },
-  hard: { '+': 25, '−': 25, '×': 30, '÷': 20 },
-  nightmare: { '+': 20, '−': 20, '×': 30, '÷': 30 },
+/**
+ * TUNABLE: Equation-mode spawn weighting ("usefulness" curve for target T).
+ *
+ *   usefulness(n) = sizeWeight(n) × factorWeight(n) × targetWeight(n)   (× oneMultiplier when n = 1)
+ *   sizeWeight(n)   = 1 / n^sizeExponent                       (lower numbers are more useful)
+ *   factorWeight(n) = max(1, 1 + perExtraDivisor × (divisors(n) − 2))  (6, 8, 12 get a boost; primes none)
+ *   targetWeight(n) = divisorOfTarget if n divides T,
+ *                     targetDifference if T − n or n − T is also an allowed tile, else 1
+ *
+ * Probabilities are normalized, then blended with a uniform share so every allowed number can appear.
+ * Operator tiles use operatorWeights (renormalized over the operators allowed at that difficulty).
+ */
+export const EQUATION_SPAWN_WEIGHTS = {
+  sizeExponent: 0.5,
+  perExtraDivisor: 0.25,
+  divisorOfTarget: 2.0,
+  targetDifference: 1.5,
+  oneMultiplier: 0.3,
+  uniformBlend: 0.1,
+  /** Hard mode: share of number weight given to negative tiles. */
+  hardNegativeShare: 0.25,
+  operatorWeights: { '+': 35, '−': 35, '×': 15, '÷': 15 } as Record<MathOperator, number>,
 };
+
+/** TUNABLE: Times Table Blitz tiles are 1–10, weighted toward factor-pair members of the current target. */
+export const TIMES_TABLE_SPAWN_WEIGHTS = {
+  factorPairBoost: 4.0,
+  oneMultiplier: 0.3,
+};
+
+export function countDivisors(n: number): number {
+  const a = Math.abs(Math.round(n));
+  if (a === 0) return 0;
+  let count = 0;
+  for (let d = 1; d * d <= a; d++) {
+    if (a % d === 0) count += d * d === a ? 1 : 2;
+  }
+  return count;
+}
+
+/**
+ * Usefulness score of number tile n for target T, given the set of allowed tile values.
+ * See EQUATION_SPAWN_WEIGHTS for the formula and tuning knobs.
+ */
+export function equationNumberUsefulness(
+  n: number,
+  target: number,
+  allowedValues: Set<number>,
+  cfg: typeof EQUATION_SPAWN_WEIGHTS = EQUATION_SPAWN_WEIGHTS
+): number {
+  const absN = Math.abs(n);
+  if (absN === 0) return 0;
+  const sizeWeight = 1 / Math.pow(absN, cfg.sizeExponent);
+  const factorWeight = Math.max(1, 1 + cfg.perExtraDivisor * (countDivisors(absN) - 2));
+  let targetWeight = 1;
+  if (target % n === 0) {
+    targetWeight = cfg.divisorOfTarget;
+  } else if (allowedValues.has(target - n) || allowedValues.has(n - target)) {
+    targetWeight = cfg.targetDifference;
+  }
+  let u = sizeWeight * factorWeight * targetWeight;
+  if (absN === 1) u *= cfg.oneMultiplier;
+  return u;
+}
+
+/**
+ * Normalized Equation-mode number probabilities for target T over `values`
+ * (usefulness-weighted, then blended with a uniform share).
+ */
+export function getEquationNumberProbabilities(
+  values: number[],
+  target: number,
+  cfg: typeof EQUATION_SPAWN_WEIGHTS = EQUATION_SPAWN_WEIGHTS
+): WeightedNumberCandidate[] {
+  if (values.length === 0) return [];
+  const allowed = new Set(values);
+  const positives = values.filter((v) => v > 0);
+  const negatives = values.filter((v) => v < 0);
+  const raw = new Map<number, number>();
+  let posSum = 0;
+  for (const v of positives) {
+    const u = equationNumberUsefulness(v, target, allowed, cfg);
+    raw.set(v, u);
+    posSum += u;
+  }
+  let negSum = 0;
+  for (const v of negatives) {
+    const u = equationNumberUsefulness(v, target, allowed, cfg);
+    raw.set(v, u);
+    negSum += u;
+  }
+  // Negatives (Hard) get a fixed share of the total number weight
+  const negScale =
+    negSum > 0 && posSum > 0 ? (posSum * (cfg.hardNegativeShare / (1 - cfg.hardNegativeShare))) / negSum : 1;
+  let total = 0;
+  for (const v of values) {
+    const w = v < 0 ? (raw.get(v) ?? 0) * negScale : raw.get(v) ?? 0;
+    raw.set(v, w);
+    total += w;
+  }
+  const uniform = 1 / values.length;
+  return values.map((v) => ({
+    value: v,
+    weight:
+      total > 0
+        ? (1 - cfg.uniformBlend) * ((raw.get(v) ?? 0) / total) + cfg.uniformBlend * uniform
+        : uniform,
+  }));
+}
+
+/** Times Table Blitz: 1–10 weighted toward numbers that pair (a × b = T, both ≤ 10) with another tile. */
+export function getTimesTableNumberProbabilities(
+  target: number,
+  cfg: typeof TIMES_TABLE_SPAWN_WEIGHTS = TIMES_TABLE_SPAWN_WEIGHTS
+): WeightedNumberCandidate[] {
+  const entries: Array<{ value: number; w: number }> = [];
+  for (let n = 1; n <= TIMES_TABLE_MAX_FACTOR; n++) {
+    const pairs = target % n === 0 && target / n <= TIMES_TABLE_MAX_FACTOR;
+    let w = pairs ? cfg.factorPairBoost : 1;
+    if (n === 1) w *= cfg.oneMultiplier;
+    entries.push({ value: n, w });
+  }
+  const sum = entries.reduce((acc, e) => acc + e.w, 0);
+  return entries.map((e) => ({ value: e.value, weight: e.w / sum }));
+}
 
 export function getProperFactors(n: number): number[] {
   const factors: number[] = [];
@@ -958,8 +1158,9 @@ export function generateSimpleRoundPool(params: {
 /**
  * Builds the valid number pool and normalized weights for the given mode, operator, and target T:
  * - Simple mode: strictly draws from the fixed round pool (up to 12 numbers from <= 6 pairs).
- * - Equation mode ('operator'): numbers 1 .. T-1 weighted toward factors of T, keeping 1 rare;
- *   in Hard mode also includes helpful negative number tiles.
+ * - Equation mode ('operator'): numbers 1 .. T-1 weighted by usefulness (EQUATION_SPAWN_WEIGHTS);
+ *   in Hard mode also includes negative number tiles.
+ * - Times Table Blitz: numbers 1–10 weighted toward factors of the current target.
  */
 export function getNumberSpawnCandidates(params: {
   difficulty: DifficultyLevel;
@@ -972,6 +1173,10 @@ export function getNumberSpawnCandidates(params: {
   const T = clampTarget(target);
   const entries: Array<{ value: number; rawWeight: number }> = [];
 
+  if (mathMode === 'timestable') {
+    return getTimesTableNumberProbabilities(Math.round(target));
+  }
+
   if (mathMode === 'operator') {
     if (T <= 2) {
       entries.push({ value: 1, rawWeight: 1 });
@@ -979,40 +1184,14 @@ export function getNumberSpawnCandidates(params: {
         entries.push({ value: -1, rawWeight: 0.25 }, { value: -2, rawWeight: 0.2 });
       }
     } else {
-      const properFactors = new Set(getProperFactors(T));
-      const factorBoost =
-        properFactors.size > 0
-          ? Math.max(2.5, Math.min(6.0, (T - 1) / (properFactors.size * 2.2)))
-          : 1.0;
-
-      let posWeightSum = 0;
-      for (let n = 1; n <= T - 1; n++) {
-        let w = n === 1 ? 0.35 : 1.0;
-        if (properFactors.has(n)) {
-          w *= factorBoost;
-        }
-        entries.push({ value: n, rawWeight: w });
-        posWeightSum += w;
-      }
-
+      // Usefulness-weighted pool 1 .. T-1 (Hard adds negatives); see EQUATION_SPAWN_WEIGHTS
+      const values: number[] = [];
+      for (let n = 1; n <= T - 1; n++) values.push(n);
       if (difficulty === 'hard') {
         const negMax = Math.max(4, T - 1);
-        const negEntries: Array<{ value: number; rawWeight: number }> = [];
-        let negRawSum = 0;
-        for (let k = 1; k <= negMax; k++) {
-          let w = k === 1 ? 0.35 : 1.0;
-          if (properFactors.has(k)) {
-            w *= factorBoost;
-          }
-          negEntries.push({ value: -k, rawWeight: w });
-          negRawSum += w;
-        }
-        // Scale negative numbers to ~25% of total number weight in Hard Equation mode
-        const scale = negRawSum > 0 ? (posWeightSum * (0.25 / 0.75)) / negRawSum : 1;
-        for (const ne of negEntries) {
-          entries.push({ value: ne.value, rawWeight: ne.rawWeight * scale });
-        }
+        for (let k = 1; k <= negMax; k++) values.push(-k);
       }
+      return getEquationNumberProbabilities(values, T);
     }
   } else {
     const activePool =
@@ -1041,8 +1220,9 @@ export function getNumberSpawnCandidates(params: {
 export function getOperatorSpawnWeights(
   difficulty: DifficultyLevel
 ): Array<{ op: MathOperator; weight: number }> {
-  const table = OPERATOR_WEIGHTS_BY_DIFFICULTY[difficulty];
-  const entries = ALL_OPERATORS.filter((op) => table[op] > 0).map((op) => ({
+  const table = EQUATION_SPAWN_WEIGHTS.operatorWeights;
+  const allowed = getModeOperators(difficulty, 'operator');
+  const entries = allowed.filter((op) => table[op] > 0).map((op) => ({
     op,
     weight: table[op],
   }));
@@ -1123,7 +1303,7 @@ export function drawMathTile(params: {
     rng = Math.random,
   } = params;
 
-  if (mathMode === 'simple') {
+  if (isAutoOperatorMode(mathMode)) {
     return drawWeightedNumber({
       difficulty,
       mathMode,
@@ -1195,7 +1375,7 @@ export function checkBoardSolvable(
     timeBudgetMs?: number;
   }
 ): SolverResult {
-  const simpleOp = options?.simpleOperator ?? '+';
+  const simpleOp = getEffectiveSimpleOperator(mathMode, options?.simpleOperator ?? '+');
   const maxNumbers =
     options?.maxNumbers ??
     (difficulty === 'beginner' || difficulty === 'easy' ? 3 : 6);
@@ -1204,11 +1384,10 @@ export function checkBoardSolvable(
     (typeof performance !== 'undefined' ? performance.now() : Date.now()) + timeBudgetMs;
   const nowFn = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
-  const diffAllowedOps = getAllowedOperators(difficulty);
-  const effectiveAllowedOps: MathOperator[] =
-    mathMode === 'simple'
-      ? [diffAllowedOps.includes(simpleOp) ? simpleOp : '+']
-      : diffAllowedOps;
+  const diffAllowedOps = getModeOperators(difficulty, mathMode);
+  const effectiveAllowedOps: MathOperator[] = isAutoOperatorMode(mathMode)
+    ? [diffAllowedOps.includes(simpleOp) ? simpleOp : diffAllowedOps[0] ?? '+']
+    : diffAllowedOps;
   const allowNeg = allowsNegativeIntermediates(difficulty);
 
   // Dynamic bucketing by distinct number value present on board (handles any range)
@@ -1353,7 +1532,7 @@ export function checkBoardSolvable(
 
         if (
           !isBedmasParenFallback &&
-          mathMode === 'simple' &&
+          isAutoOperatorMode(mathMode) &&
           effectiveAllowedOps.length === 1 &&
           !allowNeg &&
           !hasNegativeNums
@@ -1436,7 +1615,7 @@ export function checkBoardSolvable(
           if (numCounts[i] === 0) continue;
           const n = distinctNums[i];
           if (
-            mathMode === 'simple' &&
+            isAutoOperatorMode(mathMode) &&
             effectiveAllowedOps.length === 1 &&
             !hasNegativeNums &&
             nextAdd.den === 1
@@ -1466,7 +1645,7 @@ export function checkBoardSolvable(
             op === '×' ? reduceFrac(termNum * n, termDen) : reduceFrac(termNum, termDen * n);
           if (!nextFrac) continue;
           if (
-            mathMode === 'simple' &&
+            isAutoOperatorMode(mathMode) &&
             effectiveAllowedOps.length === 1 &&
             !hasNegativeNums &&
             nextFrac.den === 1
@@ -1551,7 +1730,7 @@ function getPrioritizedCompletionNumbers(params: {
   };
 
   for (const a of boardNums) {
-    if (mathMode === 'simple') {
+    if (isAutoOperatorMode(mathMode)) {
       if (simpleOperator === '+') {
         addIfValid(target - a);
       } else if (simpleOperator === '−') {
@@ -1592,10 +1771,11 @@ export function pickHelperTile(params: {
     target,
     difficulty,
     mathMode,
-    simpleOperator = '+',
+    simpleOperator: rawSimpleOperator = '+',
     simpleRoundPool,
     rng = Math.random,
   } = params;
+  const simpleOperator = getEffectiveSimpleOperator(mathMode, rawSimpleOperator);
 
   const numCandidates = getNumberSpawnCandidates({
     difficulty,
@@ -1738,7 +1918,7 @@ function findConstructive3TileRecipe(
     numCandidates.length > 0 ? numCandidates : [1, Math.max(1, target - 1)];
 
   if (mathMode === 'operator') {
-    const allowedOps = getAllowedOperators(difficulty);
+    const allowedOps = getModeOperators(difficulty, mathMode);
     for (let attempt = 0; attempt < 150; attempt++) {
       const a = fallbackPool[Math.floor(rng() * fallbackPool.length)];
       const b = fallbackPool[Math.floor(rng() * fallbackPool.length)];
@@ -1760,8 +1940,11 @@ function findConstructive3TileRecipe(
   }
 
   // Simple mode: pick a valid solving pair directly from simpleRoundPool (or candidate pool) + 3rd pool filler
+  // Times Table Blitz: pick a factor pair from 1–10
   const activePool =
-    simpleRoundPool && simpleRoundPool.length > 0
+    mathMode === 'timestable'
+      ? numCandidates
+      : simpleRoundPool && simpleRoundPool.length > 0
       ? simpleRoundPool
       : generateSimpleRoundPool({ target, simpleOperator, difficulty, rng });
 
@@ -1775,7 +1958,12 @@ function findConstructive3TileRecipe(
   });
 
   const validPairs: Array<[number, number]> = [];
-  for (let i = 0; i < activePool.length; i++) {
+  if (mathMode === 'timestable') {
+    for (let a = 1; a <= TIMES_TABLE_MAX_FACTOR; a++) {
+      if (target % a === 0 && target / a <= TIMES_TABLE_MAX_FACTOR) validPairs.push([a, target / a]);
+    }
+  }
+  for (let i = 0; i < activePool.length && validPairs.length === 0; i++) {
     for (let j = 0; j < activePool.length; j++) {
       if (i === j) continue;
       const a = activePool[i];
@@ -1813,10 +2001,11 @@ export function computeBoardRescueReplacements(params: {
     target,
     difficulty,
     mathMode,
-    simpleOperator = '+',
+    simpleOperator: rawSimpleOperator = '+',
     simpleRoundPool,
     rng = Math.random,
   } = params;
+  const simpleOperator = getEffectiveSimpleOperator(mathMode, rawSimpleOperator);
   if (frozenTiles.length === 0) return [];
 
   const count = Math.min(3, frozenTiles.length);

@@ -69,10 +69,12 @@ export const WordBar: React.FC<WordBarProps> = ({
 }) => {
   const evalMode = getEvaluationMode(difficulty);
   const allowNegative = allowsNegativeIntermediates(difficulty);
+  // Simple mode and Times Table Blitz auto-insert the operator
+  const isAutoOp = mathMode !== 'operator';
 
   // Extract numbers and operators from current selection
   const { nums, ops, hasSyntaxMismatch } = useMemo(() => {
-    if (mathMode === 'simple') {
+    if (isAutoOp) {
       const n = selectedTiles.map((t) => t.tile.numValue ?? 0);
       return {
         nums: n,
@@ -304,7 +306,7 @@ export const WordBar: React.FC<WordBarProps> = ({
   };
 
   const renderEquationTokens = () => {
-    if (mathMode === 'simple') {
+    if (isAutoOp) {
       return (
         <div
           ref={containerRef}
@@ -483,7 +485,7 @@ export const WordBar: React.FC<WordBarProps> = ({
     if (selectedTiles.length === 0) {
       return (
         <span className="text-slate-400 text-xs sm:text-sm font-medium truncate max-w-full leading-tight">
-          {mathMode === 'simple'
+          {isAutoOp
             ? `Tap numbers (${simpleOperator} auto-inserted) to make ${target}`
             : `Tap number, operator, number to make ${target}`}
         </span>
@@ -636,7 +638,7 @@ export const WordBar: React.FC<WordBarProps> = ({
                   _
                 </span>
                 <span className="text-xs font-bold text-slate-500 font-mono">
-                  {mathMode === 'simple' ? simpleOperator : 'op'}
+                  {isAutoOp ? simpleOperator : 'op'}
                 </span>
                 <span className="w-8 h-9 rounded-lg border-2 border-dashed border-slate-800 flex items-center justify-center text-xs font-bold">
                   _
@@ -653,7 +655,7 @@ export const WordBar: React.FC<WordBarProps> = ({
 
         {/* Controls Row: Read-only Mode/Operator Indicator + ( ) / Backspace / Clear / Enter */}
         <div className="flex flex-col sm:flex-row items-center justify-between gap-1.5 pt-1 border-t border-slate-800/80">
-          {mathMode === 'simple' ? (
+          {isAutoOp ? (
             <div className="flex items-center gap-2 shrink-0">
               <span
                 className={`px-2.5 py-1 rounded-xl border text-xs font-bold flex items-center gap-1.5 ${OP_BADGE_STYLES[simpleOperator]}`}

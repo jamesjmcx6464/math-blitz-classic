@@ -79,7 +79,9 @@ export const HowToPlayModal: React.FC<HowToPlayModalProps> = ({ onClose }) => {
                 Use 2–6 numbers to hit your target (<span className="font-mono text-slate-100">2–100</span>). Longer equations and{' '}
                 <span className="font-mono text-emerald-300">× ÷</span> steps earn more points; cancelling pairs (<span className="font-mono text-slate-100">+3 −3</span>) score 0, while <span className="font-mono text-slate-100">1</span>s score normally. Pick{' '}
                 <strong className="text-white">Simple mode</strong> for a chosen operator and matching number pairs, or{' '}
-                <strong className="text-white">Equation mode</strong> for mixed operator tiles.
+                <strong className="text-white">Equation mode</strong> for mixed operator tiles (Beginner: + and − only), or{' '}
+                <strong className="text-white">Times Table Blitz</strong>: × is automatic and the target changes to a new
+                times-table answer (10–90) after every correct entry.
               </p>
             </div>
           </div>

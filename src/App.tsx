@@ -48,10 +48,18 @@ import {
   computeBoardRescueReplacements,
   createSeededRng,
   getTargetBand,
+  isAutoOperatorMode,
+  getEffectiveSimpleOperator,
+  pickTimesTableTarget,
   BoardTileRef,
 } from './utils/mathEngine';
 import { soundManager } from './utils/audio';
-import { saveHighScore, makeTimeBucketKey } from './utils/highScores';
+import {
+  saveHighScore,
+  makeTimeBucketKey,
+  getLeaderboardOperator,
+  getLeaderboardTarget,
+} from './utils/highScores';
 import {
   getSavedDifficulty,
   saveDifficulty,
@@ -406,6 +414,16 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [screen, frozenTiles, fallingTiles, target, difficulty, mathMode, simpleOperator]);
 
+  // Times Table Blitz changes the target mid-game; restore the player's chosen target on the menu
+  useEffect(() => {
+    if (screen !== 'MENU' || mathModeRef.current !== 'timestable') return;
+    const saved = getSavedTarget();
+    if (targetRef.current !== saved) {
+      setTarget(saved);
+      targetRef.current = saved;
+    }
+  }, [screen]);
+
   // Beginner / Easy 15-second idle hint pulse
   useEffect(() => {
     if (screen !== 'PLAYING') {
@@ -585,11 +603,11 @@ export default function App() {
         entryId: stats.entryId,
         mode: 'solo',
         mathMode: mathModeRef.current,
-        operator: mathModeRef.current === 'operator' ? 'mixed' : simpleOperatorRef.current,
+        operator: getLeaderboardOperator(mathModeRef.current, simpleOperatorRef.current),
         timeBucket,
         difficulty: difficultyRef.current,
-        target: targetRef.current,
-        targetBand: getTargetBand(targetRef.current, false),
+        target: getLeaderboardTarget(mathModeRef.current, targetRef.current),
+        targetBand: getTargetBand(getLeaderboardTarget(mathModeRef.current, targetRef.current), false),
         isPractice: false,
         playerName: activePlayer.name,
         playerLogo: activePlayer.logo,
@@ -832,7 +850,10 @@ export default function App() {
       .map((t) => ({ id: t.id, tile: t.tile }));
 
     // Solvability Director: if unsolvable, spawn a helper (capped at <= 1 in 4 spawns)
-    const canSpawnHelper = !recentHelperFlagsRef.current.slice(-3).some(Boolean);
+    // Times Table Blitz: the target changes every answer, so always keep a valid pair coming
+    const canSpawnHelper =
+      mathModeRef.current === 'timestable' ||
+      !recentHelperFlagsRef.current.slice(-3).some(Boolean);
     const needsHelper = !solvabilityStateRef.current.solvable && allRefs.length >= 1;
 
     let drawnTile: MathTileInfo;
@@ -957,10 +978,10 @@ export default function App() {
     const requestedOp = overrides?.simpleOperator ?? simpleOperatorRef.current;
     const nextSimpleOp: MathOperator = allowed.includes(requestedOp) ? requestedOp : '+';
     const requiresComp = nextMathMode === 'simple' && nextSimpleOp === '×';
-    const nextTarget = clampTarget(
-      overrides?.target ?? targetRef.current,
-      requiresComp
-    );
+    const nextTarget =
+      nextMathMode === 'timestable'
+        ? pickTimesTableTarget({})
+        : clampTarget(overrides?.target ?? targetRef.current, requiresComp);
     const nextPractice = overrides?.isPractice ?? false;
     const effectiveTimeLimit =
       nextPractice
@@ -1349,7 +1370,7 @@ export default function App() {
 
       if (getEvaluationMode(difficultyRef.current) === 'bedmas') {
         let remainingNums = 0;
-        if (mathModeRef.current === 'simple') {
+        if (isAutoOperatorMode(mathModeRef.current)) {
           remainingNums = remaining.length;
         } else {
           for (let i = 0; i < remaining.length; i++) {
@@ -1386,7 +1407,7 @@ export default function App() {
       return;
     }
 
-    if (mathModeRef.current === 'simple') {
+    if (isAutoOperatorMode(mathModeRef.current)) {
       if (tile.tile.kind !== 'number') return;
       if (selectedTiles.length >= 6) {
         soundManager.playWordInvalid();
@@ -1436,7 +1457,7 @@ export default function App() {
     let opCount = 0;
     let validAlt = true;
 
-    if (mathModeRef.current === 'simple') {
+    if (isAutoOperatorMode(mathModeRef.current)) {
       numCount = selectedTiles.length;
       opCount = Math.max(0, numCount - 1);
     } else {
@@ -1517,10 +1538,10 @@ export default function App() {
     let numberCount = 0;
     let evalRes;
 
-    if (activeMath === 'simple') {
+    if (isAutoOperatorMode(activeMath)) {
       const nums = selectedTiles.map((t) => t.tile.numValue ?? 0);
       const ops = new Array<MathOperator>(Math.max(0, nums.length - 1)).fill(
-        simpleOperatorRef.current
+        getEffectiveSimpleOperator(activeMath, simpleOperatorRef.current)
       );
       eqString = formatEquationString(nums, ops, {
         difficulty: activeDiff,
@@ -1670,6 +1691,20 @@ export default function App() {
 
     // Animate & clear selected tiles
     const selectedIds = new Set(selectedTiles.map((t) => t.id));
+
+    // Times Table Blitz: new target after every correct entry (prefers one already solvable on the board)
+    if (activeMath === 'timestable') {
+      const remainingNums = [...frozenTilesRef.current, ...fallingTilesRef.current]
+        .filter((t) => !selectedIds.has(t.id) && !t.isClearing && t.tile.kind === 'number')
+        .map((t) => t.tile.numValue ?? 0);
+      const nextTarget = pickTimesTableTarget({
+        current: activeTarget,
+        boardNumbers: remainingNums,
+        rng: rngRef.current,
+      });
+      setTarget(nextTarget);
+      targetRef.current = nextTarget;
+    }
     frozenTilesRef.current = frozenTilesRef.current.map((t) =>
       selectedIds.has(t.id) ? { ...t, isClearing: true } : t
     );
@@ -1962,6 +1997,9 @@ export default function App() {
           onChangeSimpleOperator={handleChangeSimpleOperator}
           target={target}
           onChangeTarget={handleChangeTarget}
+          onOpenHowToPlay={() => setIsHowToPlayOpen(true)}
+          onOpenEquationHistory={() => setIsEquationHistoryOpen(true)}
+          lastEquationCount={equationHistory.length}
         />
       )}
 
@@ -1986,7 +2024,7 @@ export default function App() {
           handleStartClassroomMatch(config);
         }}
         difficulty={difficulty}
-        defaultMathMode={mathMode}
+        defaultMathMode={mathMode === 'timestable' ? 'simple' : mathMode}
         defaultSimpleOperator={simpleOperator}
         defaultTarget={target}
         isWide={viewMode === 'wide'}
@@ -2068,12 +2106,9 @@ export default function App() {
                 ? (freePlaySpeedRef.current / freePlaySettings.dropSpeed) * 100
                 : undefined
             }
-            equationCount={equationHistory.length}
-            onOpenEquationHistory={() => setIsEquationHistoryOpen(true)}
-            onOpenHowToPlay={() => setIsHowToPlayOpen(true)}
             target={target}
             mathMode={mathMode}
-            simpleOperator={simpleOperator}
+            simpleOperator={getEffectiveSimpleOperator(mathMode, simpleOperator)}
             classroomMatch={classroomMatch}
             onOpenScoreboard={() => setIsClassroomScoreboardOpen(true)}
             soloPlayer={currentSoloPlayer}
@@ -2081,7 +2116,7 @@ export default function App() {
 
           <WordBar
             selectedTiles={selectedTiles}
-            simpleOperator={simpleOperator}
+            simpleOperator={getEffectiveSimpleOperator(mathMode, simpleOperator)}
             mathMode={mathMode}
             difficulty={difficulty}
             target={target}
@@ -2176,7 +2211,7 @@ export default function App() {
           isPractice={isPractice}
           target={target}
           mathMode={mathMode}
-          operator={mathMode === 'operator' ? 'mixed' : simpleOperator}
+          operator={getLeaderboardOperator(mathMode, simpleOperator)}
           onNewGame={() => {
             if (currentSoloPlayer) {
               const preset = DIFFICULTY_PRESETS[difficultyRef.current];

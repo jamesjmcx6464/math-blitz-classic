@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import {
   Trophy,
   Volume2,
@@ -10,6 +10,7 @@ import {
   Sparkles,
   ArrowRight,
   HelpCircle,
+  BookOpen,
   Gauge,
   Flame,
   Calculator,
@@ -21,7 +22,6 @@ import {
   MathMode,
   MathOperator,
 } from '../types/game';
-import { HowToPlayModal } from './HowToPlayModal';
 import { TargetPicker } from './TargetPicker';
 import { SimpleOperatorPicker } from './SimpleOperatorPicker';
 import { isCompositeTarget } from '../utils/mathEngine';
@@ -42,6 +42,9 @@ interface StartMenuProps {
   onChangeSimpleOperator: (op: MathOperator) => void;
   target: number;
   onChangeTarget: (nextTarget: number) => void;
+  onOpenHowToPlay: () => void;
+  onOpenEquationHistory: () => void;
+  lastEquationCount?: number;
 }
 
 const DIFFICULTY_ORDER: DifficultyLevel[] = ['beginner', 'easy', 'normal', 'hard', 'nightmare'];
@@ -88,9 +91,12 @@ export const StartMenu: React.FC<StartMenuProps> = ({
   onChangeSimpleOperator,
   target,
   onChangeTarget,
+  onOpenHowToPlay,
+  onOpenEquationHistory,
+  lastEquationCount = 0,
 }) => {
   const isWide = screenMode === 'pc';
-  const [showHowToPlay, setShowHowToPlay] = useState<boolean>(false);
+  const isTimesTable = mathMode === 'timestable';
   const activePreset = DIFFICULTY_PRESETS[difficulty];
   const requiresComposite = mathMode === 'simple' && simpleOperator === '×';
   const quickPlayBlockedByPrime = requiresComposite && !isCompositeTarget(target);
@@ -205,8 +211,11 @@ export const StartMenu: React.FC<StartMenuProps> = ({
                   Quick Play
                 </span>
                 <span className="text-xs sm:text-sm font-extrabold opacity-85 block mt-0.5">
-                  1:00 · Make {target} · {activePreset.label} ·{' '}
-                  {mathMode === 'operator' ? 'Equation' : `Simple (${simpleOperator})`}
+                  {isTimesTable
+                    ? `1:00 · Times Table Blitz · ${activePreset.label}`
+                    : `1:00 · Make ${target} · ${activePreset.label} · ${
+                        mathMode === 'operator' ? 'Equation' : `Simple (${simpleOperator})`
+                      }`}
                 </span>
               </div>
             </div>
@@ -275,11 +284,13 @@ export const StartMenu: React.FC<StartMenuProps> = ({
             <span className="text-xs font-semibold text-slate-400">
               {mathMode === 'operator'
                 ? 'Operators & numbers fall as tiles'
+                : isTimesTable
+                ? 'Auto ×, new target every answer'
                 : `Auto-inserts "${simpleOperator}" all round`}
             </span>
           </div>
 
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-3 gap-2">
             <button
               type="button"
               onClick={() => onChangeMathMode('simple')}
@@ -302,6 +313,17 @@ export const StartMenu: React.FC<StartMenuProps> = ({
             >
               Equation Mode
             </button>
+            <button
+              type="button"
+              onClick={() => onChangeMathMode('timestable')}
+              className={`min-h-[44px] px-3 py-1.5 rounded-xl border-2 font-display font-black text-xs sm:text-sm transition-all cursor-pointer active:scale-95 ${
+                isTimesTable
+                  ? 'bg-amber-400 text-slate-950 border-amber-200 shadow-md shadow-amber-400/20'
+                  : 'bg-slate-800/80 border-slate-700/80 text-slate-300 hover:bg-slate-800'
+              }`}
+            >
+              Times Table Blitz
+            </button>
           </div>
 
           {mathMode === 'simple' && (
@@ -314,16 +336,23 @@ export const StartMenu: React.FC<StartMenuProps> = ({
           )}
         </div>
 
-        {/* 5. Target Number Picker (2–100, default 10) */}
-        <div className="w-full bg-slate-900/90 border border-slate-800 rounded-2xl p-3 shadow-sm">
-          <TargetPicker
-            difficulty={difficulty}
-            target={target}
-            onChangeTarget={onChangeTarget}
-            requiresComposite={requiresComposite}
-            compact
-          />
-        </div>
+        {/* 5. Target Number Picker (2–100, default 10); Times Table Blitz picks its own targets */}
+        {isTimesTable ? (
+          <div className="w-full bg-slate-900/90 border border-slate-800 rounded-2xl p-3 shadow-sm text-xs font-semibold text-slate-400">
+            Targets are random 2-digit times-table answers (10–90) and change after every correct
+            answer.
+          </div>
+        ) : (
+          <div className="w-full bg-slate-900/90 border border-slate-800 rounded-2xl p-3 shadow-sm">
+            <TargetPicker
+              difficulty={difficulty}
+              target={target}
+              onChangeTarget={onChangeTarget}
+              requiresComposite={requiresComposite}
+              compact
+            />
+          </div>
+        )}
 
         {/* 6. Difficulty Menu (Beginner, Easy, Normal, Hard, Nightmare) */}
         <div className="w-full bg-slate-900/90 border border-slate-800 rounded-2xl p-3 shadow-sm space-y-2">
@@ -377,17 +406,30 @@ export const StartMenu: React.FC<StartMenuProps> = ({
           <span>Leaderboard</span>
         </button>
 
-        <button
-          type="button"
-          onClick={() => setShowHowToPlay(true)}
-          className="min-h-[44px] px-3.5 rounded-2xl bg-slate-900/90 hover:bg-slate-800 border border-slate-700/80 font-bold text-xs sm:text-sm text-slate-200 flex items-center gap-2 transition-all cursor-pointer shadow-sm active:scale-95"
-        >
-          <HelpCircle className="w-4 h-4 text-sky-400" />
-          <span>How to Play</span>
-        </button>
-      </footer>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onOpenEquationHistory}
+            aria-label="My Equations"
+            className="min-h-[44px] px-3.5 rounded-2xl bg-slate-900/90 hover:bg-slate-800 border border-slate-700/80 font-bold text-xs sm:text-sm text-slate-200 flex items-center gap-2 transition-all cursor-pointer shadow-sm active:scale-95"
+          >
+            <BookOpen className="w-4 h-4 text-amber-400" />
+            <span className="hidden min-[400px]:inline">
+              Equations{lastEquationCount > 0 ? ` (${lastEquationCount})` : ''}
+            </span>
+          </button>
 
-      {showHowToPlay && <HowToPlayModal onClose={() => setShowHowToPlay(false)} />}
+          <button
+            type="button"
+            onClick={onOpenHowToPlay}
+            aria-label="How to Play"
+            className="min-h-[44px] px-3.5 rounded-2xl bg-slate-900/90 hover:bg-slate-800 border border-slate-700/80 font-bold text-xs sm:text-sm text-slate-200 flex items-center gap-2 transition-all cursor-pointer shadow-sm active:scale-95"
+          >
+            <HelpCircle className="w-4 h-4 text-sky-400" />
+            <span>How to Play</span>
+          </button>
+        </div>
+      </footer>
     </div>
   );
 };

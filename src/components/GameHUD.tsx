@@ -3,13 +3,11 @@ import {
   Pause,
   Volume2,
   VolumeX,
-  BookOpen,
   Clock,
   Target,
   Rocket,
   Star,
   Users,
-  HelpCircle,
 } from 'lucide-react';
 import { ViewMode, ClassroomMatchState, MathMode, MathOperator } from '../types/game';
 import gsap from 'gsap';
@@ -24,9 +22,6 @@ interface GameHUDProps {
   timeLeftSec?: number | null;
   isPractice?: boolean;
   freePlaySpeedPct?: number;
-  equationCount?: number;
-  onOpenEquationHistory?: () => void;
-  onOpenHowToPlay?: () => void;
   target: number;
   mathMode: MathMode;
   simpleOperator?: MathOperator;
@@ -100,8 +95,6 @@ export const GameHUD: React.FC<GameHUDProps> = ({
   timeLeftSec,
   isPractice = false,
   freePlaySpeedPct,
-  onOpenEquationHistory,
-  onOpenHowToPlay,
   target,
   mathMode,
   simpleOperator = '+',
@@ -132,7 +125,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
               </span>
               <span className="text-[10px] sm:text-xs font-bold text-slate-300 block leading-none">
                 R{classroomMatch.currentRound}/{classroomMatch.config.totalRounds} · Make {target} ·{' '}
-                {mathMode === 'operator' ? 'Equation' : simpleOperator}
+                {mathMode === 'operator' ? 'Equation' : mathMode === 'timestable' ? '× Table' : simpleOperator}
               </span>
             </div>
           </div>
@@ -190,18 +183,6 @@ export const GameHUD: React.FC<GameHUDProps> = ({
             </button>
           )}
 
-          {onOpenEquationHistory && (
-            <button
-              type="button"
-              onClick={onOpenEquationHistory}
-              aria-label="My Equations"
-              className="min-h-[44px] min-w-[44px] px-2.5 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-200 border-2 border-slate-700 font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-sm active:scale-95"
-            >
-              <BookOpen className="w-4 h-4 text-amber-400" />
-              <span className="hidden sm:inline">Equations</span>
-            </button>
-          )}
-
           <button
             type="button"
             onClick={onToggleSound}
@@ -239,7 +220,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                 {soloPlayer.name}
               </span>
               <span className="text-[10px] font-bold text-indigo-300 block leading-none">
-                {mathMode === 'operator' ? 'Equation' : 'Simple'}
+                {mathMode === 'operator' ? 'Equation' : mathMode === 'timestable' ? 'Times Table' : 'Simple'}
               </span>
             </div>
           </div>
@@ -261,8 +242,14 @@ export const GameHUD: React.FC<GameHUDProps> = ({
             <span>Target</span>
           </span>
           <div className="text-base sm:text-lg font-display font-black text-white font-mono leading-none flex items-center gap-1">
-            <span>{target}</span>
-            {mathMode === 'simple' && (
+            {mathMode === 'timestable' ? (
+              <span key={target} className="animate-target-pop text-amber-300">
+                {target}
+              </span>
+            ) : (
+              <span>{target}</span>
+            )}
+            {mathMode !== 'operator' && (
               <span className="text-xs font-mono font-black text-sky-300 bg-sky-500/20 px-1.5 py-0.5 rounded-md border border-sky-400/40">
                 {simpleOperator}
               </span>
@@ -311,29 +298,6 @@ export const GameHUD: React.FC<GameHUDProps> = ({
       </div>
 
       <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-        {onOpenHowToPlay && (
-          <button
-            type="button"
-            onClick={onOpenHowToPlay}
-            aria-label="How to Play"
-            className="min-h-[44px] min-w-[44px] rounded-2xl bg-slate-800 hover:bg-slate-700 text-sky-400 border-2 border-slate-700 flex items-center justify-center transition-all cursor-pointer active:scale-95 shadow-sm"
-          >
-            <HelpCircle className="w-5 h-5" />
-          </button>
-        )}
-
-        {onOpenEquationHistory && (
-          <button
-            type="button"
-            onClick={onOpenEquationHistory}
-            aria-label="My Equations"
-            className="min-h-[44px] min-w-[44px] px-3 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-200 border-2 border-slate-700 font-bold text-sm flex items-center justify-center gap-1.5 transition-all cursor-pointer active:scale-95 shadow-sm"
-          >
-            <BookOpen className="w-5 h-5 text-amber-400" />
-            <span className="hidden sm:inline">Equations</span>
-          </button>
-        )}
-
         <button
           type="button"
           onClick={onToggleSound}

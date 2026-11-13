@@ -3,6 +3,7 @@ import {
   getHighScores,
   clearHighScores,
   formatOperatorLabel,
+  formatMathModeLabel,
   formatTimeBucketLabel,
   sortTimeBuckets,
   HighScoreEntry,
@@ -80,7 +81,7 @@ const MODE_META: Record<
 };
 
 const MODE_ORDER: LeaderboardMode[] = ['quick', 'solo', 'team'];
-const MATH_MODE_ORDER: MathMode[] = ['simple', 'operator'];
+const MATH_MODE_ORDER: MathMode[] = ['simple', 'operator', 'timestable'];
 const OPERATOR_ORDER: LeaderboardOperator[] = ['+', '−', '×', '÷', 'mixed'];
 const DIFFICULTY_ORDER: DifficultyLevel[] = ['beginner', 'easy', 'normal', 'hard', 'nightmare'];
 
@@ -422,17 +423,19 @@ export const HighScoresModal: React.FC<HighScoresModalProps> = ({
                       isSelected
                         ? mm === 'operator'
                           ? 'bg-violet-500 text-white border-violet-300'
+                          : mm === 'timestable'
+                          ? 'bg-amber-400 text-slate-950 border-amber-200'
                           : 'bg-sky-400 text-slate-950 border-sky-200'
                         : 'bg-slate-800/60 border-slate-700/80 text-slate-300 hover:bg-slate-800'
                     }`}
                   >
                     <Calculator className="w-3.5 h-3.5" />
-                    <span>{mm === 'operator' ? 'Equation' : 'Simple'}</span>
+                    <span>{formatMathModeLabel(mm)}</span>
                   </button>
                 );
               })}
 
-              {availableOperators.map((op) => {
+              {activeMathMode !== 'timestable' && availableOperators.map((op) => {
                 const isSelected = activeOperator === op;
                 return (
                   <button
@@ -450,7 +453,7 @@ export const HighScoresModal: React.FC<HighScoresModalProps> = ({
                 );
               })}
 
-              {availableTargets.map((tgt) => {
+              {activeMathMode !== 'timestable' && availableTargets.map((tgt) => {
                 const isSelected = activeTarget === tgt;
                 return (
                   <button
@@ -535,7 +538,11 @@ export const HighScoresModal: React.FC<HighScoresModalProps> = ({
                 </div>
                 <span className="text-xs text-slate-300 font-medium block truncate">
                   {lastResult.totalEquations} equations · Best: {lastResult.longestEquation || '-'}
-                  {lastResult.target ? ` · Make ${lastResult.target}` : ''}
+                  {lastResult.mathMode === 'timestable'
+                    ? ' · Times Table Blitz'
+                    : lastResult.target
+                    ? ` · Make ${lastResult.target}`
+                    : ''}
                   {lastResult.operator ? ` · ${formatOperatorLabel(lastResult.operator)}` : ''}
                 </span>
               </div>
@@ -636,7 +643,10 @@ export const HighScoresModal: React.FC<HighScoresModalProps> = ({
                         )}
                       </div>
                       <div className="text-[11px] text-slate-400 font-medium truncate">
-                        Make {entry.target} · {formatOperatorLabel(entry.operator)} · Best:{' '}
+                        {entry.mathMode === 'timestable'
+                          ? 'Times Table Blitz'
+                          : `Make ${entry.target} · ${formatOperatorLabel(entry.operator)}`}{' '}
+                        · Best:{' '}
                         <span className="font-mono font-bold text-slate-300">
                           {entry.longestEquation}
                         </span>{' '}

@@ -483,7 +483,7 @@ export const SoloPlayerSetupModal: React.FC<SoloPlayerSetupModalProps> = ({
                 <Calculator className="w-3.5 h-3.5 text-sky-400" />
                 <span>Math Mode</span>
               </label>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-3 gap-2">
                 <button
                   type="button"
                   onClick={() => setMathMode('simple')}
@@ -506,6 +506,17 @@ export const SoloPlayerSetupModal: React.FC<SoloPlayerSetupModalProps> = ({
                 >
                   Equation Mode
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setMathMode('timestable')}
+                  className={`min-h-[44px] px-3 rounded-xl border-2 font-bold text-xs sm:text-sm transition-colors cursor-pointer ${
+                    mathMode === 'timestable'
+                      ? 'bg-amber-400 text-slate-950 border-amber-200 font-black'
+                      : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
+                  }`}
+                >
+                  Times Table Blitz
+                </button>
               </div>
 
               {mathMode === 'simple' && (
@@ -517,12 +528,19 @@ export const SoloPlayerSetupModal: React.FC<SoloPlayerSetupModalProps> = ({
               )}
             </div>
 
-            <TargetPicker
-              difficulty={difficulty}
-              target={target}
-              onChangeTarget={setTarget}
-              requiresComposite={requiresComposite}
-            />
+            {mathMode === 'timestable' ? (
+              <p className="text-xs font-semibold text-slate-400">
+                Times Table Blitz: × is automatic and the target changes to a new 2-digit
+                times-table answer after every correct entry.
+              </p>
+            ) : (
+              <TargetPicker
+                difficulty={difficulty}
+                target={target}
+                onChangeTarget={setTarget}
+                requiresComposite={requiresComposite}
+              />
+            )}
 
             {/* Timer & Practice */}
             <div className="space-y-1.5">

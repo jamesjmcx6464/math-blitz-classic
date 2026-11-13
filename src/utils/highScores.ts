@@ -29,6 +29,28 @@ export interface HighScoreEntry {
 }
 
 const STORAGE_KEY = 'math_blitz_high_scores_v1';
+
+/** Times Table Blitz targets change every answer, so all runs share one leaderboard target slot. */
+export const TIMES_TABLE_LEADERBOARD_TARGET = 10;
+
+export function getLeaderboardOperator(
+  mathMode: MathMode,
+  simpleOperator: MathOperator
+): LeaderboardOperator {
+  if (mathMode === 'operator') return 'mixed';
+  if (mathMode === 'timestable') return '×';
+  return simpleOperator;
+}
+
+export function getLeaderboardTarget(mathMode: MathMode, target: number): number {
+  return mathMode === 'timestable' ? TIMES_TABLE_LEADERBOARD_TARGET : target;
+}
+
+export function formatMathModeLabel(mathMode: MathMode): string {
+  if (mathMode === 'operator') return 'Equation';
+  if (mathMode === 'timestable') return 'Times Table';
+  return 'Simple';
+}
 const MAX_ENTRIES_PER_BUCKET = 30;
 
 export function formatOperatorLabel(op: LeaderboardOperator): string {
@@ -114,10 +136,13 @@ function getBucketKey(e: HighScoreEntry): string {
 
 function migrateEntry(raw: Record<string, unknown>): HighScoreEntry | null {
   const mode: LeaderboardMode = isValidMode(raw.mode) ? raw.mode : 'quick';
-  const mathMode: MathMode = raw.mathMode === 'operator' ? 'operator' : 'simple';
+  const mathMode: MathMode =
+    raw.mathMode === 'operator' || raw.mathMode === 'timestable' ? raw.mathMode : 'simple';
   const operator: LeaderboardOperator = isValidOperator(raw.operator)
     ? mathMode === 'operator'
       ? 'mixed'
+      : mathMode === 'timestable'
+      ? '×'
       : raw.operator === 'mixed'
       ? '+'
       : raw.operator
@@ -255,7 +280,7 @@ export function saveHighScore(
     timeBucket,
     timeSeconds,
     difficulty,
-    target,
+    target: rawTarget,
     isPractice = false,
     score,
     longestEquation,
@@ -275,7 +300,8 @@ export function saveHighScore(
     return { isNewHighScore: false, rank: -1 };
   }
 
-  const operator: LeaderboardOperator = mathMode === 'operator' ? 'mixed' : simpleOperator;
+  const operator = getLeaderboardOperator(mathMode, simpleOperator);
+  const target = getLeaderboardTarget(mathMode, rawTarget);
   const targetBand = getTargetBand(target, mode === 'quick');
   const scores = getHighScores();
   const entry: HighScoreEntry = {
