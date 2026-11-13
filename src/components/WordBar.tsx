@@ -6,7 +6,16 @@ import {
   MathOperator,
   DifficultyLevel,
 } from '../types/game';
-import { getMulDivGroupRanges } from '../utils/mathEngine';
+import {
+  allowsNegativeIntermediates,
+  computeLeftToRightSteps,
+  evaluateEquation,
+  formatChainedStepsString,
+  getEvaluationMode,
+  getLeftToRightWrapCounts,
+  getMulDivGroupRanges,
+  normalizeParenWraps,
+} from '../utils/mathEngine';
 import { Check, RotateCcw, Delete } from 'lucide-react';
 
 interface WordBarProps {
@@ -15,6 +24,9 @@ interface WordBarProps {
   mathMode: MathMode;
   difficulty: DifficultyLevel;
   target: number;
+  parenWraps?: number[];
+  onWrapParens?: () => void;
+  onUnwrapParen?: (wrapEndIdx: number) => void;
   onClear: () => void;
   onSubmit: () => void;
   onRemoveTile: (tile: HexTile) => void;
@@ -43,7 +55,11 @@ export const WordBar: React.FC<WordBarProps> = ({
   selectedTiles,
   simpleOperator,
   mathMode,
+  difficulty,
   target,
+  parenWraps = [],
+  onWrapParens,
+  onUnwrapParen,
   onClear,
   onSubmit,
   onRemoveTile,
@@ -51,7 +67,10 @@ export const WordBar: React.FC<WordBarProps> = ({
   errorMessage,
   lastFoundEquation = null,
 }) => {
-  // Extract numbers and operators from current selection (no evaluation/correctness check until submit)
+  const evalMode = getEvaluationMode(difficulty);
+  const allowNegative = allowsNegativeIntermediates(difficulty);
+
+  // Extract numbers and operators from current selection
   const { nums, ops, hasSyntaxMismatch } = useMemo(() => {
     if (mathMode === 'simple') {
       const n = selectedTiles.map((t) => t.tile.numValue ?? 0);
@@ -78,9 +97,109 @@ export const WordBar: React.FC<WordBarProps> = ({
     return { nums: n, ops: o, hasSyntaxMismatch: mismatch };
   }, [mathMode, selectedTiles, simpleOperator]);
 
+  const completeOps = useMemo(
+    () => ops.slice(0, Math.max(0, nums.length - 1)),
+    [ops, nums.length]
+  );
+
+  // Running total / current value (neutral display; never shows target match or score before submit)
+  const ltrState = useMemo(() => {
+    if (evalMode !== 'left-to-right' || hasSyntaxMismatch) {
+      return {
+        steps: [],
+        runningTotal: null as number | null,
+        error: null as string | null,
+        wentNegative: false,
+      };
+    }
+    return computeLeftToRightSteps(nums, completeOps, allowNegative);
+  }, [evalMode, hasSyntaxMismatch, nums, completeOps, allowNegative]);
+
+  const ltrWraps = useMemo(() => {
+    if (evalMode !== 'left-to-right' || hasSyntaxMismatch || nums.length < 2) {
+      return { openAtStart: 0, closeAfterNum: [] as number[] };
+    }
+    return getLeftToRightWrapCounts(completeOps);
+  }, [evalMode, hasSyntaxMismatch, nums.length, completeOps]);
+
+  const activeBedmasWraps = useMemo(() => {
+    if (evalMode !== 'bedmas' || hasSyntaxMismatch) return [];
+    return normalizeParenWraps(parenWraps, nums.length);
+  }, [evalMode, hasSyntaxMismatch, parenWraps, nums.length]);
+
+  const bedmasCloseCountMap = useMemo(() => {
+    const m = new Map<number, number>();
+    for (const w of activeBedmasWraps) {
+      m.set(w, (m.get(w) ?? 0) + 1);
+    }
+    return m;
+  }, [activeBedmasWraps]);
+
+  const bedmasPreview = useMemo(() => {
+    if (evalMode !== 'bedmas' || hasSyntaxMismatch || nums.length === 0) {
+      return { value: null as number | null, error: null as string | null };
+    }
+    if (nums.length === 1) {
+      return { value: nums[0], error: null };
+    }
+    const res = evaluateEquation(nums, completeOps, {
+      difficulty,
+      mathMode,
+      target,
+      parenWraps: activeBedmasWraps,
+    });
+    return {
+      value: res.result,
+      error: res.isValidMath ? null : res.error,
+    };
+  }, [
+    evalMode,
+    hasSyntaxMismatch,
+    nums,
+    completeOps,
+    difficulty,
+    mathMode,
+    target,
+    activeBedmasWraps,
+  ]);
+
+  const runningTotalDisplay = useMemo(() => {
+    if (selectedTiles.length === 0 || hasSyntaxMismatch) {
+      return { text: '—', isNegative: false, isError: false };
+    }
+    if (evalMode === 'left-to-right') {
+      if (ltrState.error && ltrState.runningTotal === null) {
+        return { text: 'err', isNegative: false, isError: true };
+      }
+      if (ltrState.runningTotal === null) {
+        return { text: '—', isNegative: false, isError: false };
+      }
+      return {
+        text: String(ltrState.runningTotal),
+        isNegative: ltrState.runningTotal < 0,
+        isError: Boolean(ltrState.error),
+      };
+    }
+    if (bedmasPreview.value !== null) {
+      return {
+        text: String(bedmasPreview.value),
+        isNegative: bedmasPreview.value < 0,
+        isError: false,
+      };
+    }
+    return {
+      text: bedmasPreview.error ? 'err' : '—',
+      isNegative: false,
+      isError: Boolean(bedmasPreview.error),
+    };
+  }, [selectedTiles.length, hasSyntaxMismatch, evalMode, ltrState, bedmasPreview]);
+
   const mulDivGroupRanges = useMemo(
-    () => (hasSyntaxMismatch ? [] : getMulDivGroupRanges(ops.slice(0, Math.max(0, nums.length - 1)))),
-    [hasSyntaxMismatch, ops, nums.length]
+    () =>
+      evalMode === 'bedmas' && !hasSyntaxMismatch
+        ? getMulDivGroupRanges(completeOps)
+        : [],
+    [evalMode, hasSyntaxMismatch, completeOps]
   );
 
   const isInMulDivGroup = (numIdx: number): boolean => {
@@ -90,8 +209,19 @@ export const WordBar: React.FC<WordBarProps> = ({
   };
 
   const isOpInMulDivGroup = (opIdx: number): boolean => {
-    return opIdx < ops.length && (ops[opIdx] === '×' || ops[opIdx] === '÷');
+    return (
+      evalMode === 'bedmas' &&
+      opIdx < ops.length &&
+      (ops[opIdx] === '×' || ops[opIdx] === '÷')
+    );
   };
+
+  const canWrapParens =
+    evalMode === 'bedmas' &&
+    !hasSyntaxMismatch &&
+    nums.length >= 2 &&
+    nums.length === ops.length + 1 &&
+    !activeBedmasWraps.includes(nums.length - 1);
 
   const canSubmit = selectedTiles.length > 0 && nums.length >= 2;
 
@@ -132,7 +262,7 @@ export const WordBar: React.FC<WordBarProps> = ({
       const containerWidth = containerRef.current.clientWidth;
       const contentWidth = contentRef.current.scrollWidth;
       if (containerWidth > 0 && contentWidth > 0 && contentWidth > containerWidth - 8) {
-        setScale(Math.max(0.58, (containerWidth - 8) / contentWidth));
+        setScale(Math.max(0.55, (containerWidth - 8) / contentWidth));
       } else {
         setScale(1);
       }
@@ -142,7 +272,36 @@ export const WordBar: React.FC<WordBarProps> = ({
     const observer = new ResizeObserver(computeScale);
     if (containerRef.current) observer.observe(containerRef.current);
     return () => observer.disconnect();
-  }, [selectedTiles, simpleOperator]);
+  }, [selectedTiles, simpleOperator, activeBedmasWraps, difficulty]);
+
+  const openParenCount =
+    evalMode === 'bedmas' ? activeBedmasWraps.length : ltrWraps.openAtStart;
+
+  const renderClosingParens = (numIdx: number) => {
+    if (evalMode === 'bedmas') {
+      const count = bedmasCloseCountMap.get(numIdx) ?? 0;
+      if (count <= 0) return null;
+      return (
+        <button
+          type="button"
+          onClick={() => onUnwrapParen?.(numIdx)}
+          title="Tap to remove parenthesis level"
+          aria-label="Remove parenthesis wrap"
+          className="px-1.5 min-h-[38px] rounded-lg bg-indigo-500/20 hover:bg-indigo-500/35 border border-indigo-400/50 text-indigo-200 font-mono font-black text-xl flex items-center justify-center cursor-pointer transition-colors shrink-0"
+        >
+          {')'.repeat(count)}
+        </button>
+      );
+    }
+
+    const count = ltrWraps.closeAfterNum[numIdx] ?? 0;
+    if (count <= 0) return null;
+    return (
+      <span className="px-0.5 font-mono font-black text-xl text-slate-300 select-none shrink-0">
+        {')'.repeat(count)}
+      </span>
+    );
+  };
 
   const renderEquationTokens = () => {
     if (mathMode === 'simple') {
@@ -163,10 +322,23 @@ export const WordBar: React.FC<WordBarProps> = ({
             className="transition-transform duration-100 ease-out"
           >
             <div ref={contentRef} className="flex flex-nowrap items-center justify-center gap-1">
+              {openParenCount > 0 && (
+                <span
+                  className={`px-0.5 font-mono font-black text-xl select-none shrink-0 ${
+                    evalMode === 'bedmas' ? 'text-indigo-300' : 'text-slate-300'
+                  }`}
+                >
+                  {'('.repeat(openParenCount)}
+                </span>
+              )}
+
               {selectedTiles.map((tile, idx) => {
                 const isUnderlined = isInMulDivGroup(idx);
                 const precedingOp = idx > 0 ? ops[idx - 1] : null;
                 const opUnderlined = idx > 0 && isOpInMulDivGroup(idx - 1);
+                const isNeg = (tile.tile.numValue ?? 0) < 0;
+                const labelText =
+                  isNeg && idx > 0 ? `(${tile.tile.display})` : tile.tile.display;
 
                 return (
                   <React.Fragment key={`eq-tile-${tile.id}-${idx}`}>
@@ -187,18 +359,21 @@ export const WordBar: React.FC<WordBarProps> = ({
                       title="Tap to remove"
                       aria-label={`Remove ${tile.tile.display}`}
                       className={`relative min-w-[44px] h-[44px] px-2 rounded-xl font-display font-black text-xl border-2 shadow-md flex items-center justify-center transition-transform hover:scale-105 active:scale-95 cursor-pointer animate-letter-spring focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-amber-300 shrink-0 tabular-nums ${
-                        isUnderlined
+                        isNeg
+                          ? 'bg-rose-200 text-rose-950 border-rose-400'
+                          : isUnderlined
                           ? 'bg-amber-400 text-amber-950 border-sky-400 ring-2 ring-sky-400/50'
                           : 'bg-amber-400 text-amber-950 border-amber-300'
                       }`}
                     >
                       <span className={isUnderlined ? 'underline decoration-2 underline-offset-2' : ''}>
-                        {tile.tile.display}
+                        {labelText}
                       </span>
                       <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-slate-900/90 text-white text-[10px] font-black flex items-center justify-center pointer-events-none">
                         ✕
                       </span>
                     </button>
+                    {renderClosingParens(idx)}
                   </React.Fragment>
                 );
               })}
@@ -232,35 +407,52 @@ export const WordBar: React.FC<WordBarProps> = ({
           className="transition-transform duration-100 ease-out"
         >
           <div ref={contentRef} className="flex flex-nowrap items-center justify-center gap-1">
+            {openParenCount > 0 && (
+              <span
+                className={`px-0.5 font-mono font-black text-xl select-none shrink-0 ${
+                  evalMode === 'bedmas' ? 'text-indigo-300' : 'text-slate-300'
+                }`}
+              >
+                {'('.repeat(openParenCount)}
+              </span>
+            )}
+
             {selectedTiles.map((tile, idx) => {
               const isNum = tile.tile.kind === 'number';
               const numIdx = Math.floor(idx / 2);
               const opIdx = Math.floor((idx - 1) / 2);
               const isUnderlined =
                 !hasSyntaxMismatch && (isNum ? isInMulDivGroup(numIdx) : isOpInMulDivGroup(opIdx));
+              const isNeg = isNum && (tile.tile.numValue ?? 0) < 0;
+              const labelText =
+                isNeg && idx > 0 ? `(${tile.tile.display})` : tile.tile.display;
 
               return (
-                <button
-                  key={`eq-tile-${tile.id}-${idx}`}
-                  type="button"
-                  onClick={() => onRemoveTile(tile)}
-                  title="Tap to remove"
-                  aria-label={`Remove ${tile.tile.display}`}
-                  className={`relative min-w-[44px] h-[44px] px-2 rounded-xl font-display font-black text-xl border-2 shadow-md flex items-center justify-center transition-transform hover:scale-105 active:scale-95 cursor-pointer animate-letter-spring focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-amber-300 shrink-0 tabular-nums ${
-                    !isNum
-                      ? 'bg-slate-800 text-sky-300 border-sky-400/60'
-                      : isUnderlined
-                      ? 'bg-amber-400 text-amber-950 border-sky-400 ring-2 ring-sky-400/50'
-                      : 'bg-amber-400 text-amber-950 border-amber-300'
-                  }`}
-                >
-                  <span className={isUnderlined ? 'underline decoration-2 underline-offset-2' : ''}>
-                    {tile.tile.display}
-                  </span>
-                  <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-slate-900/90 text-white text-[10px] font-black flex items-center justify-center pointer-events-none">
-                    ✕
-                  </span>
-                </button>
+                <React.Fragment key={`eq-tile-${tile.id}-${idx}`}>
+                  <button
+                    type="button"
+                    onClick={() => onRemoveTile(tile)}
+                    title="Tap to remove"
+                    aria-label={`Remove ${tile.tile.display}`}
+                    className={`relative min-w-[44px] h-[44px] px-2 rounded-xl font-display font-black text-xl border-2 shadow-md flex items-center justify-center transition-transform hover:scale-105 active:scale-95 cursor-pointer animate-letter-spring focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-amber-300 shrink-0 tabular-nums ${
+                      !isNum
+                        ? 'bg-slate-800 text-sky-300 border-sky-400/60'
+                        : isNeg
+                        ? 'bg-rose-200 text-rose-950 border-rose-400'
+                        : isUnderlined
+                        ? 'bg-amber-400 text-amber-950 border-sky-400 ring-2 ring-sky-400/50'
+                        : 'bg-amber-400 text-amber-950 border-amber-300'
+                    }`}
+                  >
+                    <span className={isUnderlined ? 'underline decoration-2 underline-offset-2' : ''}>
+                      {labelText}
+                    </span>
+                    <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-slate-900/90 text-white text-[10px] font-black flex items-center justify-center pointer-events-none">
+                      ✕
+                    </span>
+                  </button>
+                  {isNum && !hasSyntaxMismatch && renderClosingParens(numIdx)}
+                </React.Fragment>
               );
             })}
           </div>
@@ -297,6 +489,20 @@ export const WordBar: React.FC<WordBarProps> = ({
         </span>
       );
     }
+    if (evalMode === 'left-to-right' && ltrState.error && !hasSyntaxMismatch) {
+      return (
+        <span className="text-rose-300 text-xs sm:text-sm font-semibold truncate max-w-full leading-tight">
+          {ltrState.error}
+        </span>
+      );
+    }
+    if (evalMode === 'left-to-right' && ltrState.steps.length > 0 && !hasSyntaxMismatch) {
+      return (
+        <span className="text-slate-300 text-xs sm:text-sm font-mono font-semibold truncate max-w-full leading-tight tabular-nums">
+          {formatChainedStepsString(ltrState.steps)}
+        </span>
+      );
+    }
     if (nums.length < 2) {
       return (
         <span className="text-slate-300 text-xs sm:text-sm font-semibold truncate max-w-full leading-tight">
@@ -308,14 +514,16 @@ export const WordBar: React.FC<WordBarProps> = ({
     }
     return (
       <span className="text-slate-300 text-xs sm:text-sm font-semibold truncate max-w-full leading-tight">
-        Press Enter to check for {target}
+        {evalMode === 'bedmas'
+          ? `Press Enter to check for ${target} (or wrap with ( ))`
+          : `Press Enter to check for ${target}`}
       </span>
     );
   };
 
   const renderTargetBadge = () => (
-    <div className="flex items-center shrink-0">
-      <div className="px-2.5 py-1 rounded-xl bg-slate-800 border border-slate-700 flex items-center gap-1.5">
+    <div className="flex items-center gap-1.5 shrink-0">
+      <div className="px-2 py-1 rounded-xl bg-slate-800 border border-slate-700 flex items-center gap-1.5">
         <span className="text-[11px] font-bold uppercase tracking-wider text-amber-400">
           Make
         </span>
@@ -323,11 +531,44 @@ export const WordBar: React.FC<WordBarProps> = ({
           {target}
         </span>
       </div>
+
+      <div
+        className={`px-2 py-1 rounded-xl border flex items-center gap-1 ${
+          runningTotalDisplay.isError || runningTotalDisplay.isNegative
+            ? 'bg-rose-950/60 border-rose-500/50 text-rose-300'
+            : 'bg-slate-800/90 border-slate-700 text-sky-200'
+        }`}
+        title={evalMode === 'bedmas' ? 'Current equation value' : 'Running total (left to right)'}
+      >
+        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+          =
+        </span>
+        <span className="font-display font-black text-base font-mono tabular-nums leading-none min-w-[18px] text-center">
+          {runningTotalDisplay.text}
+        </span>
+      </div>
     </div>
   );
 
   const renderButtons = () => (
     <div className="flex items-center gap-1.5 sm:gap-2 w-full sm:w-auto h-[48px]">
+      {evalMode === 'bedmas' && (
+        <button
+          type="button"
+          onClick={onWrapParens}
+          disabled={!canWrapParens}
+          title="Wrap current equation in parentheses"
+          aria-label="Wrap current equation in parentheses"
+          className={`min-w-[48px] min-h-[44px] h-[48px] px-3 rounded-xl flex items-center justify-center font-mono font-black text-base border-2 transition-all shrink-0 ${
+            canWrapParens
+              ? 'bg-indigo-600/80 hover:bg-indigo-500 text-white border-indigo-400 cursor-pointer active:scale-95 shadow-sm'
+              : 'bg-slate-900/50 text-slate-600 border-slate-800/60 cursor-not-allowed'
+          }`}
+        >
+          ( )
+        </button>
+      )}
+
       <button
         type="button"
         onClick={() => {
@@ -337,14 +578,14 @@ export const WordBar: React.FC<WordBarProps> = ({
         }}
         disabled={selectedTiles.length === 0}
         aria-label="Backspace last tile"
-        className={`min-h-[44px] h-[48px] px-3 rounded-xl flex items-center justify-center gap-1.5 font-bold text-xs sm:text-sm border-2 transition-all shrink-0 ${
+        className={`min-h-[44px] h-[48px] px-2.5 sm:px-3 rounded-xl flex items-center justify-center gap-1.5 font-bold text-xs sm:text-sm border-2 transition-all shrink-0 ${
           selectedTiles.length > 0
             ? 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700 cursor-pointer active:scale-95'
             : 'bg-slate-900/50 text-slate-600 border-slate-800/60 cursor-not-allowed'
         }`}
       >
         <Delete className="w-4 h-4 shrink-0" />
-        <span>Backspace</span>
+        <span className="hidden xs:inline sm:inline">Backspace</span>
       </button>
 
       <button
@@ -352,7 +593,7 @@ export const WordBar: React.FC<WordBarProps> = ({
         onClick={onClear}
         disabled={selectedTiles.length === 0}
         aria-label="Clear selection"
-        className={`min-h-[44px] h-[48px] px-3 rounded-xl flex items-center justify-center gap-1.5 font-bold text-xs sm:text-sm border-2 transition-all shrink-0 ${
+        className={`min-h-[44px] h-[48px] px-2.5 sm:px-3 rounded-xl flex items-center justify-center gap-1.5 font-bold text-xs sm:text-sm border-2 transition-all shrink-0 ${
           selectedTiles.length > 0
             ? 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700 cursor-pointer active:scale-95'
             : 'bg-slate-900/50 text-slate-600 border-slate-800/60 cursor-not-allowed'
@@ -367,7 +608,7 @@ export const WordBar: React.FC<WordBarProps> = ({
         onClick={onSubmit}
         disabled={!canSubmit}
         aria-label="Submit equation"
-        className={`relative overflow-hidden flex-1 sm:flex-initial min-w-[104px] min-h-[44px] h-[48px] px-4 rounded-xl flex items-center justify-center gap-1.5 font-display font-black text-base transition-all shrink-0 ${
+        className={`relative overflow-hidden flex-1 sm:flex-initial min-w-[96px] sm:min-w-[104px] min-h-[44px] h-[48px] px-3 sm:px-4 rounded-xl flex items-center justify-center gap-1.5 font-display font-black text-base transition-all shrink-0 ${
           canSubmit
             ? 'bg-amber-400 hover:bg-amber-300 text-slate-950 shadow-md cursor-pointer active:scale-95'
             : 'bg-slate-900/70 text-slate-500 border border-slate-800 cursor-not-allowed'
@@ -382,7 +623,7 @@ export const WordBar: React.FC<WordBarProps> = ({
   return (
     <div className="w-full mx-auto px-1 sm:px-2 mb-1 flex flex-col gap-1.5 shrink-0 select-none">
       <div className="bg-slate-900/90 border-2 border-slate-800 rounded-2xl px-2.5 sm:px-3 py-1.5 flex flex-col gap-1.5 shadow-md">
-        {/* Top Row: Target + Equation Strip */}
+        {/* Top Row: Target + Running Total + Equation Strip */}
         <div className="flex items-center justify-between gap-2 min-h-[48px]">
           {renderTargetBadge()}
 
@@ -405,12 +646,12 @@ export const WordBar: React.FC<WordBarProps> = ({
           </div>
         </div>
 
-        {/* Status Message (feedback only after submit) */}
+        {/* Status Message (chained steps / neutral prompt; correctness feedback only after submit) */}
         <div aria-live="polite" className="h-[22px] w-full flex items-center justify-center overflow-hidden">
           {renderMessage()}
         </div>
 
-        {/* Controls Row: Read-only Mode/Operator Indicator + Backspace / Clear / Enter */}
+        {/* Controls Row: Read-only Mode/Operator Indicator + ( ) / Backspace / Clear / Enter */}
         <div className="flex flex-col sm:flex-row items-center justify-between gap-1.5 pt-1 border-t border-slate-800/80">
           {mathMode === 'simple' ? (
             <div className="flex items-center gap-2 shrink-0">
@@ -433,3 +674,4 @@ export const WordBar: React.FC<WordBarProps> = ({
     </div>
   );
 };
+

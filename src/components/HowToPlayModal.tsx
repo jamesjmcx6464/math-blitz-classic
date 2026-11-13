@@ -29,16 +29,11 @@ export const HowToPlayModal: React.FC<HowToPlayModalProps> = ({ onClose }) => {
               1
             </span>
             <div>
-              <strong className="text-white block">Order of operations</strong>
+              <strong className="text-white block">Beginner, Easy, Normal &amp; Hard (Left to Right)</strong>
               <p className="mt-0.5 leading-relaxed">
-                <span className="font-mono font-bold text-sky-300">×</span> and{' '}
-                <span className="font-mono font-bold text-sky-300">÷</span> are solved before{' '}
-                <span className="font-mono font-bold text-amber-300">+</span> and{' '}
-                <span className="font-mono font-bold text-amber-300">−</span>, left to right (no brackets).{' '}
-                <span className="underline decoration-sky-400 decoration-2 underline-offset-4">
-                  × ÷ groups are underlined
-                </span>{' '}
-                in the equation bar.
+                Equations are calculated <strong className="text-white">left to right</strong> as a running total (calculator style, no order of operations or parentheses). For example,{' '}
+                <span className="font-mono text-slate-100">5 − 3 = 2 → 2 × 3 = 6</span>. Beginner, Easy, and Normal stay at 0 or above;{' '}
+                <strong className="text-rose-300">Hard</strong> allows negative totals and negative number tiles.
               </p>
             </div>
           </div>
@@ -48,11 +43,14 @@ export const HowToPlayModal: React.FC<HowToPlayModalProps> = ({ onClose }) => {
               2
             </span>
             <div>
-              <strong className="text-white block">Whole-number division &amp; checking</strong>
+              <strong className="text-white block">BEDMAS mode &amp; parentheses ( )</strong>
               <p className="mt-0.5 leading-relaxed">
-                Every <span className="font-mono font-bold text-sky-300">÷</span> step must divide evenly with no remainder in evaluation order (for example,{' '}
-                <span className="font-mono text-rose-300">3 ÷ 2 × 4</span> is not allowed). Beginner, Easy, and Normal cannot dip below 0; Hard and Nightmare allow negative intermediate steps. Press{' '}
-                <strong className="text-white">Enter</strong> to check your equation—feedback and points are shown after you submit!
+                <strong className="text-white">BEDMAS</strong> difficulty uses real order of operations:{' '}
+                <span className="font-mono font-bold text-sky-300">×</span> and{' '}
+                <span className="font-mono font-bold text-sky-300">÷</span> before{' '}
+                <span className="font-mono font-bold text-amber-300">+</span> and{' '}
+                <span className="font-mono font-bold text-amber-300">−</span> (underlined in the bar), and allows negatives. Use the{' '}
+                <span className="font-mono font-bold text-indigo-300">( )</span> button to wrap your current equation in parentheses—even more than once!
               </p>
             </div>
           </div>
@@ -62,13 +60,11 @@ export const HowToPlayModal: React.FC<HowToPlayModalProps> = ({ onClose }) => {
               3
             </span>
             <div>
-              <strong className="text-white block">Scoring, 1s &amp; cancelling steps</strong>
+              <strong className="text-white block">Whole-number division &amp; checking</strong>
               <p className="mt-0.5 leading-relaxed">
-                Use 2–6 numbers to hit the target. Longer equations earn more points, and{' '}
-                <span className="font-mono text-emerald-300">× ÷</span> steps add a bonus (same scoring in both modes).{' '}
-                <strong className="text-amber-200">Cancelling pairs score 0</strong> and don&apos;t count toward the 2-number minimum (such as{' '}
-                <span className="font-mono text-slate-100">+3 −3</span> or{' '}
-                <span className="font-mono text-slate-100">×4 ÷4</span>); <span className="font-mono text-slate-100">1</span>s still score normally.
+                In left-to-right modes, every <span className="font-mono font-bold text-sky-300">÷</span> step must divide evenly (for example,{' '}
+                <span className="font-mono text-rose-300">3 ÷ 2 × 4</span> is invalid). In BEDMAS mode, division must give a whole number overall. Press{' '}
+                <strong className="text-white">Enter</strong> to check your equation—feedback and points appear after you submit.
               </p>
             </div>
           </div>
@@ -78,11 +74,12 @@ export const HowToPlayModal: React.FC<HowToPlayModalProps> = ({ onClose }) => {
               4
             </span>
             <div>
-              <strong className="text-white block">Simple mode vs. Equation mode</strong>
+              <strong className="text-white block">Scoring &amp; game modes</strong>
               <p className="mt-0.5 leading-relaxed">
-                Pick your target number (<span className="font-mono text-slate-100">2–100</span>) before playing. In{' '}
-                <strong className="text-white">Simple mode</strong>, choose your operator (<span className="font-mono text-slate-100">+ − × ÷</span>) before the round starts—each round spawns numbers from a random set of matching pairs for that target, and your operator is auto-inserted. In{' '}
-                <strong className="text-white">Equation mode</strong>, operator tiles fall on the board too so you can mix operations.
+                Use 2–6 numbers to hit your target (<span className="font-mono text-slate-100">2–100</span>). Longer equations and{' '}
+                <span className="font-mono text-emerald-300">× ÷</span> steps earn more points; cancelling pairs (<span className="font-mono text-slate-100">+3 −3</span>) score 0, while <span className="font-mono text-slate-100">1</span>s score normally. Pick{' '}
+                <strong className="text-white">Simple mode</strong> for a chosen operator and matching number pairs, or{' '}
+                <strong className="text-white">Equation mode</strong> for mixed operator tiles.
               </p>
             </div>
           </div>

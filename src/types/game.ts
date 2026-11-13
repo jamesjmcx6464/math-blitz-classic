@@ -142,7 +142,7 @@ export const DIFFICULTY_PRESETS: Record<DifficultyLevel, DifficultyConfig> = {
   normal: {
     id: 'normal',
     label: 'Normal',
-    description: 'All 4 ops · Balanced pace',
+    description: 'Left-to-right · All 4 ops',
     dropSpeed: 170,
     spawnIntervalMs: 1200,
     minSpawnIntervalMs: 480,
@@ -159,7 +159,7 @@ export const DIFFICULTY_PRESETS: Record<DifficultyLevel, DifficultyConfig> = {
   hard: {
     id: 'hard',
     label: 'Hard',
-    description: 'Standard speed · Negatives OK',
+    description: 'Left-to-right · Negatives OK',
     dropSpeed: 170,
     spawnIntervalMs: 850,
     minSpawnIntervalMs: 300,
@@ -175,8 +175,8 @@ export const DIFFICULTY_PRESETS: Record<DifficultyLevel, DifficultyConfig> = {
   },
   nightmare: {
     id: 'nightmare',
-    label: 'Nightmare',
-    description: 'Standard speed · Rapid spawn · Negatives OK',
+    label: 'BEDMAS',
+    description: 'Order of ops ( ) · Negatives OK',
     dropSpeed: 170,
     spawnIntervalMs: 580,
     minSpawnIntervalMs: 210,

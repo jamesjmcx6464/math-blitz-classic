@@ -136,9 +136,22 @@ export function createSeededRng(seed: number): () => number {
   };
 }
 
+export type EvaluationMode = 'left-to-right' | 'bedmas';
+
+export function getEvaluationMode(difficulty: DifficultyLevel): EvaluationMode {
+  return difficulty === 'nightmare' ? 'bedmas' : 'left-to-right';
+}
+
 export interface MulDivGroupRange {
   startNumIdx: number;
   endNumIdx: number;
+}
+
+export interface LeftToRightStep {
+  left: number;
+  op: MathOperator;
+  right: number;
+  result: number;
 }
 
 export interface EquationEvaluation {
@@ -153,12 +166,15 @@ export interface EquationEvaluation {
   scoringTileCount: number;
   score: number;
   matchesTarget: boolean;
+  evaluationMode: EvaluationMode;
+  stepResults: LeftToRightStep[];
 }
 
 export interface EvaluateOptions {
   difficulty: DifficultyLevel;
   mathMode: MathMode;
   target: number;
+  parenWraps?: number[];
 }
 
 /**
@@ -183,8 +199,213 @@ export function getMulDivGroupRanges(ops: MathOperator[]): MulDivGroupRange[] {
   return ranges;
 }
 
+export function normalizeParenWraps(
+  parenWraps: number[] | undefined,
+  numCount: number
+): number[] {
+  if (!parenWraps || parenWraps.length === 0 || numCount < 2) return [];
+  return Array.from(
+    new Set(
+      parenWraps.filter((w) => Number.isInteger(w) && w >= 1 && w < numCount)
+    )
+  ).sort((a, b) => a - b);
+}
+
 /**
- * Pure safe integer parser, validator, and scorer for Math Blitz Classic.
+ * Computes auto-parenthesization counts for honest left-to-right equation display
+ * whenever an earlier +/− expression is followed by ×/÷.
+ */
+export function getLeftToRightWrapCounts(ops: MathOperator[]): {
+  openAtStart: number;
+  closeAfterNum: number[];
+} {
+  const closeAfterNum = new Array<number>(ops.length + 1).fill(0);
+  let openAtStart = 0;
+  let hasTopLevelAddSub = false;
+
+  for (let i = 0; i < ops.length; i++) {
+    const op = ops[i];
+    if ((op === '×' || op === '÷') && hasTopLevelAddSub) {
+      openAtStart += 1;
+      closeAfterNum[i] += 1;
+      hasTopLevelAddSub = false;
+    } else if (op === '+' || op === '−') {
+      hasTopLevelAddSub = true;
+    }
+  }
+
+  return { openAtStart, closeAfterNum };
+}
+
+interface Fraction {
+  num: number;
+  den: number;
+}
+
+function gcdInt(a: number, b: number): number {
+  let x = Math.abs(a);
+  let y = Math.abs(b);
+  while (y !== 0) {
+    const t = x % y;
+    x = y;
+    y = t;
+  }
+  return x || 1;
+}
+
+function reduceFrac(num: number, den: number): Fraction | null {
+  if (den === 0 || !Number.isFinite(num) || !Number.isFinite(den)) return null;
+  if (num === 0) return { num: 0, den: 1 };
+  let n = num;
+  let d = den;
+  if (d < 0) {
+    n = -n;
+    d = -d;
+  }
+  const g = gcdInt(n, d);
+  return { num: n / g, den: d / g };
+}
+
+function addFracs(a: Fraction, b: Fraction, sign: '+' | '−'): Fraction | null {
+  const rhsNum = sign === '+' ? b.num : -b.num;
+  return reduceFrac(a.num * b.den + rhsNum * a.den, a.den * b.den);
+}
+
+function evalBedmasAtoms(
+  atoms: Fraction[],
+  ops: MathOperator[]
+): { ok: true; value: Fraction; wentNegative: boolean } | { ok: false; error: string } {
+  const terms: Array<{ sign: '+' | '−'; frac: Fraction }> = [];
+  let termSign: '+' | '−' = '+';
+  let termFrac: Fraction = atoms[0];
+
+  for (let i = 0; i < ops.length; i++) {
+    const op = ops[i];
+    const nextAtom = atoms[i + 1];
+    if (op === '×') {
+      const prod = reduceFrac(termFrac.num * nextAtom.num, termFrac.den * nextAtom.den);
+      if (!prod) return { ok: false, error: 'Overflow' };
+      termFrac = prod;
+    } else if (op === '÷') {
+      if (nextAtom.num === 0) {
+        return { ok: false, error: "Can't divide by 0" };
+      }
+      const quot = reduceFrac(termFrac.num * nextAtom.den, termFrac.den * nextAtom.num);
+      if (!quot) return { ok: false, error: 'Division must come out even' };
+      termFrac = quot;
+    } else {
+      terms.push({ sign: termSign, frac: termFrac });
+      termSign = op;
+      termFrac = nextAtom;
+    }
+  }
+  terms.push({ sign: termSign, frac: termFrac });
+
+  let acc = terms[0].frac;
+  let wentNegative = acc.num < 0;
+  for (let t = 1; t < terms.length; t++) {
+    const nextAcc = addFracs(acc, terms[t].frac, terms[t].sign);
+    if (!nextAcc) return { ok: false, error: 'Overflow' };
+    acc = nextAcc;
+    if (acc.num < 0) wentNegative = true;
+  }
+
+  return { ok: true, value: acc, wentNegative };
+}
+
+export function computeLeftToRightSteps(
+  nums: number[],
+  ops: MathOperator[],
+  allowNegative: boolean
+): {
+  steps: LeftToRightStep[];
+  runningTotal: number | null;
+  error: string | null;
+  wentNegative: boolean;
+  negativeNumIndices: Set<number>;
+} {
+  if (nums.length === 0) {
+    return {
+      steps: [],
+      runningTotal: null,
+      error: null,
+      wentNegative: false,
+      negativeNumIndices: new Set<number>(),
+    };
+  }
+
+  const steps: LeftToRightStep[] = [];
+  let running = nums[0];
+  let wentNegative = running < 0;
+  const negativeNumIndices = new Set<number>();
+  if (wentNegative) {
+    negativeNumIndices.add(0);
+    if (!allowNegative) {
+      return {
+        steps,
+        runningTotal: running,
+        error: "Can't go below 0",
+        wentNegative: true,
+        negativeNumIndices,
+      };
+    }
+  }
+
+  const stepCount = Math.min(ops.length, nums.length - 1);
+  for (let i = 0; i < stepCount; i++) {
+    const left = running;
+    const op = ops[i];
+    const right = nums[i + 1];
+
+    if (op === '+') {
+      running = left + right;
+    } else if (op === '−') {
+      running = left - right;
+    } else if (op === '×') {
+      running = left * right;
+    } else {
+      if (right === 0 || left % right !== 0) {
+        return {
+          steps,
+          runningTotal: null,
+          error: 'Division must come out even',
+          wentNegative,
+          negativeNumIndices,
+        };
+      }
+      running = left / right;
+    }
+
+    steps.push({ left, op, right, result: running });
+
+    if (running < 0) {
+      wentNegative = true;
+      negativeNumIndices.add(i + 1);
+      if (!allowNegative) {
+        return {
+          steps,
+          runningTotal: running,
+          error: "Can't go below 0",
+          wentNegative: true,
+          negativeNumIndices,
+        };
+      }
+    }
+  }
+
+  return {
+    steps,
+    runningTotal: running,
+    error: null,
+    wentNegative,
+    negativeNumIndices,
+  };
+}
+
+/**
+ * Pure safe integer/rational parser, validator, and scorer for Math Blitz Classic.
+ * - Beginner, Easy, Normal, Hard: left-to-right running total, whole-number division at every step.
+ * - BEDMAS (id: 'nightmare'): real BEDMAS precedence with ( ) wraps and whole-number division overall.
  * Never uses eval().
  */
 export function evaluateEquation(
@@ -192,12 +413,17 @@ export function evaluateEquation(
   ops: MathOperator[],
   options: EvaluateOptions
 ): EquationEvaluation {
-  const { difficulty, mathMode, target } = options;
+  const { difficulty, target, parenWraps } = options;
+  const evalMode = getEvaluationMode(difficulty);
   const allowNeg = allowsNegativeIntermediates(difficulty);
   const allowedOps = getAllowedOperators(difficulty);
-  const mulDivGroupRanges = getMulDivGroupRanges(ops);
+  const mulDivGroupRanges = evalMode === 'bedmas' ? getMulDivGroupRanges(ops) : [];
 
-  const emptyFailure = (error: string, isValidSyntax = false): EquationEvaluation => ({
+  const emptyFailure = (
+    error: string,
+    isValidSyntax = false,
+    stepResults: LeftToRightStep[] = []
+  ): EquationEvaluation => ({
     isValidSyntax,
     isValidMath: false,
     result: null,
@@ -209,6 +435,8 @@ export function evaluateEquation(
     scoringTileCount: 0,
     score: 0,
     matchesTarget: false,
+    evaluationMode: evalMode,
+    stepResults,
   });
 
   if (nums.length < 2) {
@@ -221,8 +449,11 @@ export function evaluateEquation(
     return emptyFailure('Alternate numbers & operators');
   }
   for (const n of nums) {
-    if (!Number.isInteger(n) || n < 1 || n > 2000) {
+    if (!Number.isInteger(n) || n === 0 || Math.abs(n) > 2000) {
       return emptyFailure('Invalid number tile');
+    }
+    if (n < 0 && !allowNeg) {
+      return emptyFailure("Can't go below 0", true);
     }
   }
   for (const op of ops) {
@@ -231,75 +462,74 @@ export function evaluateEquation(
     }
   }
 
-  // Step 1: Group and evaluate × and ÷ terms left-to-right (higher precedence)
-  interface Term {
-    sign: '+' | '−';
-    value: number;
-    endNumIdx: number;
-  }
+  let result = 0;
+  let wentNegative = false;
+  let negativeNumIndices = new Set<number>();
+  let stepResults: LeftToRightStep[] = [];
 
-  const terms: Term[] = [];
-  let termSign: '+' | '−' = '+';
-  let termVal = nums[0];
+  if (evalMode === 'left-to-right') {
+    const ltr = computeLeftToRightSteps(nums, ops, allowNeg);
+    stepResults = ltr.steps;
+    wentNegative = ltr.wentNegative;
+    negativeNumIndices = ltr.negativeNumIndices;
 
-  for (let i = 0; i < ops.length; i++) {
-    const op = ops[i];
-    const nextNum = nums[i + 1];
+    if (ltr.error) {
+      return {
+        isValidSyntax: true,
+        isValidMath: false,
+        result: ltr.runningTotal,
+        error: ltr.error,
+        wentNegative,
+        negativeNumIndices,
+        mulDivGroupRanges: [],
+        nullTileIndices: new Set<number>(),
+        scoringTileCount: 0,
+        score: 0,
+        matchesTarget: false,
+        evaluationMode: evalMode,
+        stepResults,
+      };
+    }
+    result = ltr.runningTotal ?? 0;
+  } else {
+    // BEDMAS mode: exact rational evaluation across nested (0..w) wraps, checking whole number overall
+    const validWraps = normalizeParenWraps(parenWraps, nums.length);
+    let currentAtom: Fraction = { num: nums[0], den: 1 };
+    let cursor = 0;
 
-    if (op === '×') {
-      termVal = termVal * nextNum;
-    } else if (op === '÷') {
-      if (nextNum === 0 || termVal % nextNum !== 0) {
-        return emptyFailure('Division must come out even', true);
+    for (const w of validWraps) {
+      const subAtoms: Fraction[] = [currentAtom];
+      for (let k = cursor + 1; k <= w; k++) {
+        subAtoms.push({ num: nums[k], den: 1 });
       }
-      termVal = termVal / nextNum;
-    } else {
-      terms.push({ sign: termSign, value: termVal, endNumIdx: i });
-      termSign = op;
-      termVal = nextNum;
-    }
-  }
-  terms.push({ sign: termSign, value: termVal, endNumIdx: nums.length - 1 });
-
-  // Step 2: Sum + and − terms left-to-right, tracking intermediate negatives
-  let runningTotal = terms[0].value;
-  let wentNegative = runningTotal < 0;
-  const negativeNumIndices = new Set<number>();
-  if (wentNegative) {
-    negativeNumIndices.add(terms[0].endNumIdx);
-  }
-
-  for (let t = 1; t < terms.length; t++) {
-    const term = terms[t];
-    if (term.sign === '+') {
-      runningTotal += term.value;
-    } else {
-      runningTotal -= term.value;
-    }
-    if (runningTotal < 0) {
-      wentNegative = true;
-      negativeNumIndices.add(term.endNumIdx);
-      if (!allowNeg) {
-        return {
-          isValidSyntax: true,
-          isValidMath: false,
-          result: runningTotal,
-          error: "Can't go below 0",
-          wentNegative: true,
-          negativeNumIndices,
-          mulDivGroupRanges,
-          nullTileIndices: new Set<number>(),
-          scoringTileCount: 0,
-          score: 0,
-          matchesTarget: false,
-        };
+      const subOps = ops.slice(cursor, w);
+      const segRes = evalBedmasAtoms(subAtoms, subOps);
+      if (!segRes.ok) {
+        return emptyFailure(segRes.error, true);
       }
+      if (segRes.wentNegative) wentNegative = true;
+      currentAtom = segRes.value;
+      cursor = w;
     }
+
+    const tailAtoms: Fraction[] = [currentAtom];
+    for (let k = cursor + 1; k < nums.length; k++) {
+      tailAtoms.push({ num: nums[k], den: 1 });
+    }
+    const tailOps = ops.slice(cursor);
+    const finalSeg = evalBedmasAtoms(tailAtoms, tailOps);
+    if (!finalSeg.ok) {
+      return emptyFailure(finalSeg.error, true);
+    }
+    if (finalSeg.wentNegative) wentNegative = true;
+
+    if (finalSeg.value.den !== 1) {
+      return emptyFailure('Division must come out even', true);
+    }
+    result = finalSeg.value.num;
   }
 
-  const result = runningTotal;
-
-  // Step 3: Identify null tiles (cancelling pairs only; 1s next to × or ÷ score normally)
+  // Identify null tiles (cancelling pairs; 1s next to × or ÷ score normally)
   const isNull = new Array<boolean>(nums.length).fill(false);
 
   // Cancel pairs matched left to right without overlap
@@ -314,7 +544,8 @@ export function evaluateEquation(
       const isPlusMinus = (opA === '+' && opB === '−') || (opA === '−' && opB === '+');
       const isMulDiv = i >= 0 && ((opA === '×' && opB === '÷') || (opA === '÷' && opB === '×'));
       const nextOp = i + 2 < ops.length ? ops[i + 2] : null;
-      const plusMinusAllowed = nextOp !== '×' && nextOp !== '÷';
+      const plusMinusAllowed =
+        evalMode === 'left-to-right' || (nextOp !== '×' && nextOp !== '÷');
 
       if ((isPlusMinus && plusMinusAllowed) || isMulDiv) {
         isNull[i + 1] = true;
@@ -336,7 +567,7 @@ export function evaluateEquation(
     } else {
       scoringTileCount += 1;
       const basePts = 2 * scoringTileCount - 1;
-      tilePoints += nums[idx] === 1 ? Math.ceil(basePts / 2) : basePts;
+      tilePoints += Math.abs(nums[idx]) === 1 ? Math.ceil(basePts / 2) : basePts;
     }
   }
 
@@ -363,6 +594,8 @@ export function evaluateEquation(
       scoringTileCount,
       score: 0,
       matchesTarget: false,
+      evaluationMode: evalMode,
+      stepResults,
     };
   }
 
@@ -381,6 +614,8 @@ export function evaluateEquation(
     scoringTileCount,
     score,
     matchesTarget,
+    evaluationMode: evalMode,
+    stepResults,
   };
 }
 
@@ -412,6 +647,8 @@ export function evaluateOperatorTokens(
           scoringTileCount: 0,
           score: 0,
           matchesTarget: false,
+          evaluationMode: getEvaluationMode(options.difficulty),
+          stepResults: [],
         };
       }
       nums.push(t.numValue);
@@ -429,6 +666,8 @@ export function evaluateOperatorTokens(
           scoringTileCount: 0,
           score: 0,
           matchesTarget: false,
+          evaluationMode: getEvaluationMode(options.difficulty),
+          stepResults: [],
         };
       }
       ops.push(t.opValue);
@@ -442,11 +681,16 @@ export function evaluateOperatorTokens(
       error: 'Finish with a number',
       wentNegative: false,
       negativeNumIndices: new Set<number>(),
-      mulDivGroupRanges: getMulDivGroupRanges(ops.slice(0, Math.max(0, nums.length - 1))),
+      mulDivGroupRanges:
+        getEvaluationMode(options.difficulty) === 'bedmas'
+          ? getMulDivGroupRanges(ops.slice(0, Math.max(0, nums.length - 1)))
+          : [],
       nullTileIndices: new Set<number>(),
       scoringTileCount: 0,
       score: 0,
       matchesTarget: false,
+      evaluationMode: getEvaluationMode(options.difficulty),
+      stepResults: [],
     };
   }
   return evaluateEquation(nums, ops, options);
@@ -515,16 +759,75 @@ export function evaluateLivePreview(
   };
 }
 
-export function formatEquationString(nums: number[], ops: MathOperator[]): string {
+function formatNumberToken(n: number, afterOperator: boolean): string {
+  if (n < 0 && afterOperator) {
+    return `(${n})`;
+  }
+  return String(n);
+}
+
+/**
+ * Formats an equation string honestly for the active evaluation mode:
+ * - Left-to-right modes: auto-wraps earlier +/− expressions before ×/÷, e.g. "(5 − 3) × 3".
+ * - BEDMAS mode: inserts explicit ( ) wraps from parenWraps.
+ */
+export function formatEquationString(
+  nums: number[],
+  ops: MathOperator[],
+  options?: {
+    difficulty?: DifficultyLevel;
+    parenWraps?: number[];
+  }
+): string {
   if (nums.length === 0) return '';
-  let out = String(nums[0]);
+  const evalMode = options?.difficulty ? getEvaluationMode(options.difficulty) : 'left-to-right';
+
+  if (evalMode === 'left-to-right') {
+    const wraps = getLeftToRightWrapCounts(ops.slice(0, Math.max(0, nums.length - 1)));
+    let out = '('.repeat(wraps.openAtStart) + formatNumberToken(nums[0], false);
+    if (wraps.closeAfterNum[0] > 0) {
+      out += ')'.repeat(wraps.closeAfterNum[0]);
+    }
+    for (let i = 0; i < ops.length; i++) {
+      out += ` ${ops[i]}`;
+      if (i + 1 < nums.length) {
+        out += ` ${formatNumberToken(nums[i + 1], true)}`;
+        if (wraps.closeAfterNum[i + 1] > 0) {
+          out += ')'.repeat(wraps.closeAfterNum[i + 1]);
+        }
+      }
+    }
+    return out;
+  }
+
+  const validWraps = normalizeParenWraps(options?.parenWraps, nums.length);
+  const closeCounts = new Map<number, number>();
+  for (const w of validWraps) {
+    closeCounts.set(w, (closeCounts.get(w) ?? 0) + 1);
+  }
+
+  let out = '('.repeat(validWraps.length) + formatNumberToken(nums[0], false);
   for (let i = 0; i < ops.length; i++) {
     out += ` ${ops[i]}`;
     if (i + 1 < nums.length) {
-      out += ` ${nums[i + 1]}`;
+      out += ` ${formatNumberToken(nums[i + 1], true)}`;
+      const closes = closeCounts.get(i + 1) ?? 0;
+      if (closes > 0) {
+        out += ')'.repeat(closes);
+      }
     }
   }
   return out;
+}
+
+export function formatChainedStepsString(steps: LeftToRightStep[]): string {
+  if (steps.length === 0) return '';
+  return steps
+    .map(
+      (s) =>
+        `${formatNumberToken(s.left, false)} ${s.op} ${formatNumberToken(s.right, true)} = ${s.result}`
+    )
+    .join(' → ');
 }
 
 // ============================================================================
@@ -574,44 +877,77 @@ function shuffleWithRng<T>(items: T[], rng: () => number): T[] {
 export function generateSimpleRoundPool(params: {
   target: number;
   simpleOperator: MathOperator;
+  difficulty?: DifficultyLevel;
   rng?: () => number;
 }): number[] {
-  const { simpleOperator, rng = Math.random } = params;
+  const { simpleOperator, difficulty = 'normal', rng = Math.random } = params;
   const T = clampTarget(params.target);
-  const pairs: Array<[number, number]> = [];
+  const includeNegatives = difficulty === 'hard';
+  const posPairs: Array<[number, number]> = [];
+  const negPairs: Array<[number, number]> = [];
 
   if (simpleOperator === '+') {
     const maxA = Math.floor(T / 2);
     for (let a = 1; a <= maxA; a++) {
       const b = T - a;
       if (b >= 1 && b <= T - 1) {
-        pairs.push([a, b]);
+        posPairs.push([a, b]);
+      }
+    }
+    if (includeNegatives) {
+      const maxNeg = Math.max(6, Math.min(20, T));
+      for (let k = 1; k <= maxNeg; k++) {
+        negPairs.push([T + k, -k]);
       }
     }
   } else if (simpleOperator === '−') {
     // a - b = T with 1 <= a <= 4*T and 1 <= b <= 4*T => 1 <= b <= 3*T and a = b + T
     const maxB = 3 * T;
     for (let b = 1; b <= maxB; b++) {
-      pairs.push([b + T, b]);
+      posPairs.push([b + T, b]);
+    }
+    if (includeNegatives) {
+      for (let a = 1; a <= T - 1; a++) {
+        negPairs.push([a, a - T]);
+      }
+      const maxK = Math.max(4, Math.min(20, 3 * T));
+      for (let k = 1; k <= maxK; k++) {
+        negPairs.push([-k, -k - T]);
+      }
     }
   } else if (simpleOperator === '×') {
     const limit = Math.floor(Math.sqrt(T));
     for (let a = 2; a <= limit; a++) {
       if (T % a === 0) {
-        pairs.push([a, T / a]);
+        posPairs.push([a, T / a]);
+        if (includeNegatives) {
+          negPairs.push([-a, -(T / a)]);
+        }
       }
     }
-    if (pairs.length === 0) {
-      pairs.push([1, T]);
+    if (posPairs.length === 0) {
+      posPairs.push([1, T]);
     }
   } else {
     // Simple ÷: pairs (k * T, k) for 2 <= k <= 12 (reasonable max 12 * T)
     for (let k = 2; k <= 12; k++) {
-      pairs.push([k * T, k]);
+      posPairs.push([k * T, k]);
+      if (includeNegatives) {
+        negPairs.push([-(k * T), -k]);
+      }
     }
   }
 
-  const chosen = shuffleWithRng(pairs, rng).slice(0, 6);
+  let chosen: Array<[number, number]>;
+  if (includeNegatives && negPairs.length > 0) {
+    const negPicked = shuffleWithRng(negPairs, rng).slice(0, 2);
+    const posNeeded = Math.max(0, 6 - negPicked.length);
+    const posPicked = shuffleWithRng(posPairs, rng).slice(0, posNeeded);
+    chosen = shuffleWithRng([...posPicked, ...negPicked], rng).slice(0, 6);
+  } else {
+    chosen = shuffleWithRng(posPairs, rng).slice(0, 6);
+  }
+
   const pool: number[] = [];
   for (const [a, b] of chosen) {
     pool.push(a, b);
@@ -622,7 +958,8 @@ export function generateSimpleRoundPool(params: {
 /**
  * Builds the valid number pool and normalized weights for the given mode, operator, and target T:
  * - Simple mode: strictly draws from the fixed round pool (up to 12 numbers from <= 6 pairs).
- * - Equation mode ('operator'): numbers 1 .. T-1 weighted toward factors of T, keeping 1 rare.
+ * - Equation mode ('operator'): numbers 1 .. T-1 weighted toward factors of T, keeping 1 rare;
+ *   in Hard mode also includes helpful negative number tiles.
  */
 export function getNumberSpawnCandidates(params: {
   difficulty: DifficultyLevel;
@@ -631,32 +968,57 @@ export function getNumberSpawnCandidates(params: {
   target: number;
   simpleRoundPool?: number[];
 }): WeightedNumberCandidate[] {
-  const { mathMode, simpleOperator = '+', target, simpleRoundPool } = params;
+  const { difficulty, mathMode, simpleOperator = '+', target, simpleRoundPool } = params;
   const T = clampTarget(target);
   const entries: Array<{ value: number; rawWeight: number }> = [];
 
   if (mathMode === 'operator') {
     if (T <= 2) {
-      return [{ value: 1, weight: 1 }];
-    }
-    const properFactors = new Set(getProperFactors(T));
-    const factorBoost =
-      properFactors.size > 0
-        ? Math.max(2.5, Math.min(6.0, (T - 1) / (properFactors.size * 2.2)))
-        : 1.0;
-
-    for (let n = 1; n <= T - 1; n++) {
-      let w = n === 1 ? 0.35 : 1.0;
-      if (properFactors.has(n)) {
-        w *= factorBoost;
+      entries.push({ value: 1, rawWeight: 1 });
+      if (difficulty === 'hard') {
+        entries.push({ value: -1, rawWeight: 0.25 }, { value: -2, rawWeight: 0.2 });
       }
-      entries.push({ value: n, rawWeight: w });
+    } else {
+      const properFactors = new Set(getProperFactors(T));
+      const factorBoost =
+        properFactors.size > 0
+          ? Math.max(2.5, Math.min(6.0, (T - 1) / (properFactors.size * 2.2)))
+          : 1.0;
+
+      let posWeightSum = 0;
+      for (let n = 1; n <= T - 1; n++) {
+        let w = n === 1 ? 0.35 : 1.0;
+        if (properFactors.has(n)) {
+          w *= factorBoost;
+        }
+        entries.push({ value: n, rawWeight: w });
+        posWeightSum += w;
+      }
+
+      if (difficulty === 'hard') {
+        const negMax = Math.max(4, T - 1);
+        const negEntries: Array<{ value: number; rawWeight: number }> = [];
+        let negRawSum = 0;
+        for (let k = 1; k <= negMax; k++) {
+          let w = k === 1 ? 0.35 : 1.0;
+          if (properFactors.has(k)) {
+            w *= factorBoost;
+          }
+          negEntries.push({ value: -k, rawWeight: w });
+          negRawSum += w;
+        }
+        // Scale negative numbers to ~25% of total number weight in Hard Equation mode
+        const scale = negRawSum > 0 ? (posWeightSum * (0.25 / 0.75)) / negRawSum : 1;
+        for (const ne of negEntries) {
+          entries.push({ value: ne.value, rawWeight: ne.rawWeight * scale });
+        }
+      }
     }
   } else {
     const activePool =
       simpleRoundPool && simpleRoundPool.length > 0
         ? simpleRoundPool
-        : generateSimpleRoundPool({ target: T, simpleOperator });
+        : generateSimpleRoundPool({ target: T, simpleOperator, difficulty });
     const counts = new Map<number, number>();
     for (const val of activePool) {
       counts.set(val, (counts.get(val) ?? 0) + 1);
@@ -858,10 +1220,12 @@ export function checkBoardSolvable(
     '÷': [],
   };
 
+  const evalMode = getEvaluationMode(difficulty);
+
   for (const item of boardTiles) {
     if (item.tile.kind === 'number' && item.tile.numValue !== undefined) {
       const n = item.tile.numValue;
-      if (n >= 1 && n <= 2000) {
+      if (n !== 0 && Math.abs(n) <= 2000 && (allowNeg || n > 0)) {
         const list = numBuckets.get(n);
         if (list) list.push(item.id);
         else numBuckets.set(n, [item.id]);
@@ -876,6 +1240,7 @@ export function checkBoardSolvable(
   const distinctNums = Array.from(numBuckets.keys()).sort((a, b) => a - b);
   const numCounts = distinctNums.map((n) => numBuckets.get(n)!.length);
   const totalNumsAvailable = numCounts.reduce((s, c) => s + c, 0);
+  const hasNegativeNums = distinctNums.some((n) => n < 0);
 
   if (totalNumsAvailable < 2) {
     return { solvable: false, solutionTileIds: [], timedOut: false };
@@ -925,11 +1290,103 @@ export function checkBoardSolvable(
     return ids;
   }
 
-  function dfs(
+  function dfsLeftToRight(depth: number, runningTotal: number, isBedmasParenFallback: boolean): boolean {
+    nodesVisited++;
+    if ((nodesVisited & 63) === 0 && nowFn() >= deadline) {
+      timedOut = true;
+      return false;
+    }
+
+    if (depth >= 2 && runningTotal === target) {
+      const parenWraps = isBedmasParenFallback
+        ? Array.from({ length: Math.max(0, chosenNums.length - 2) }, (_, idx) => idx + 1)
+        : undefined;
+      const res = evaluateEquation(chosenNums, chosenOps, { ...evalOptions, parenWraps });
+      if (res.isValidMath && res.matchesTarget) {
+        return true;
+      }
+    }
+
+    if (depth >= maxNumbers) {
+      return false;
+    }
+
+    if (depth === 0) {
+      for (let i = 0; i < distinctNums.length; i++) {
+        if (numCounts[i] === 0) continue;
+        const n = distinctNums[i];
+        if (!allowNeg && n < 0) continue;
+        numCounts[i]--;
+        chosenNums.push(n);
+        if (dfsLeftToRight(1, n, isBedmasParenFallback)) return true;
+        chosenNums.pop();
+        numCounts[i]++;
+        if (timedOut) return false;
+      }
+      return false;
+    }
+
+    for (let oi = 0; oi < effectiveAllowedOps.length; oi++) {
+      const op = effectiveAllowedOps[oi];
+      if (mathMode === 'operator' && opCounts[op] === 0) continue;
+
+      if (mathMode === 'operator') opCounts[op]--;
+      chosenOps.push(op);
+
+      for (let i = 0; i < distinctNums.length; i++) {
+        if (numCounts[i] === 0) continue;
+        const n = distinctNums[i];
+
+        let nextTotal: number;
+        if (op === '+') {
+          nextTotal = runningTotal + n;
+        } else if (op === '−') {
+          nextTotal = runningTotal - n;
+        } else if (op === '×') {
+          nextTotal = runningTotal * n;
+        } else {
+          if (n === 0 || runningTotal % n !== 0) continue;
+          nextTotal = runningTotal / n;
+        }
+
+        if (!allowNeg && nextTotal < 0) continue;
+
+        if (
+          !isBedmasParenFallback &&
+          mathMode === 'simple' &&
+          effectiveAllowedOps.length === 1 &&
+          !allowNeg &&
+          !hasNegativeNums
+        ) {
+          if (op === '+' && nextTotal > target) continue;
+          if (op === '−' && nextTotal < target) continue;
+          if (op === '×' && nextTotal > target) continue;
+          if (op === '÷' && nextTotal < target) continue;
+        }
+
+        numCounts[i]--;
+        chosenNums.push(n);
+        if (dfsLeftToRight(depth + 1, nextTotal, isBedmasParenFallback)) return true;
+        chosenNums.pop();
+        numCounts[i]++;
+        if (timedOut) break;
+      }
+
+      chosenOps.pop();
+      if (mathMode === 'operator') opCounts[op]++;
+      if (timedOut) return false;
+    }
+
+    return false;
+  }
+
+  function dfsBedmas(
     depth: number,
-    runningAdd: number,
+    addNum: number,
+    addDen: number,
     termSign: '+' | '−',
-    termVal: number
+    termNum: number,
+    termDen: number
   ): boolean {
     nodesVisited++;
     if ((nodesVisited & 63) === 0 && nowFn() >= deadline) {
@@ -938,8 +1395,8 @@ export function checkBoardSolvable(
     }
 
     if (depth >= 2) {
-      const total = termSign === '+' ? runningAdd + termVal : runningAdd - termVal;
-      if (total === target) {
+      const combined = addFracs({ num: addNum, den: addDen }, { num: termNum, den: termDen }, termSign);
+      if (combined && combined.den === 1 && combined.num === target) {
         const res = evaluateEquation(chosenNums, chosenOps, evalOptions);
         if (res.isValidMath && res.matchesTarget) {
           return true;
@@ -957,7 +1414,7 @@ export function checkBoardSolvable(
         const n = distinctNums[i];
         numCounts[i]--;
         chosenNums.push(n);
-        if (dfs(1, 0, '+', n)) return true;
+        if (dfsBedmas(1, 0, 1, '+', n, 1)) return true;
         chosenNums.pop();
         numCounts[i]++;
         if (timedOut) return false;
@@ -970,24 +1427,26 @@ export function checkBoardSolvable(
       if (mathMode === 'operator' && opCounts[op] === 0) continue;
 
       if (op === '+' || op === '−') {
-        const nextRunningAdd = termSign === '+' ? runningAdd + termVal : runningAdd - termVal;
-        if (!allowNeg && nextRunningAdd < 0) {
-          continue;
-        }
+        const nextAdd = addFracs({ num: addNum, den: addDen }, { num: termNum, den: termDen }, termSign);
+        if (!nextAdd) continue;
         if (mathMode === 'operator') opCounts[op]--;
         chosenOps.push(op);
 
         for (let i = 0; i < distinctNums.length; i++) {
           if (numCounts[i] === 0) continue;
           const n = distinctNums[i];
-          // Quick pruning for monotonic Simple + / −
-          if (mathMode === 'simple' && effectiveAllowedOps.length === 1) {
-            if (op === '+' && nextRunningAdd + n > target) continue;
-            if (op === '−' && nextRunningAdd - n < target) continue;
+          if (
+            mathMode === 'simple' &&
+            effectiveAllowedOps.length === 1 &&
+            !hasNegativeNums &&
+            nextAdd.den === 1
+          ) {
+            if (op === '+' && nextAdd.num + n > target) continue;
+            if (op === '−' && nextAdd.num - n < target) continue;
           }
           numCounts[i]--;
           chosenNums.push(n);
-          if (dfs(depth + 1, nextRunningAdd, op, n)) return true;
+          if (dfsBedmas(depth + 1, nextAdd.num, nextAdd.den, op, n, 1)) return true;
           chosenNums.pop();
           numCounts[i]++;
           if (timedOut) break;
@@ -996,24 +1455,31 @@ export function checkBoardSolvable(
         chosenOps.pop();
         if (mathMode === 'operator') opCounts[op]++;
       } else {
-        // × or ÷
         if (mathMode === 'operator') opCounts[op]--;
         chosenOps.push(op);
 
         for (let i = 0; i < distinctNums.length; i++) {
           if (numCounts[i] === 0) continue;
           const n = distinctNums[i];
-          if (op === '÷' && termVal % n !== 0) continue;
-          const nextTermVal = op === '×' ? termVal * n : termVal / n;
-          // Quick pruning for Simple × / ÷
-          if (mathMode === 'simple' && effectiveAllowedOps.length === 1) {
-            if (op === '×' && nextTermVal > target) continue;
-            if (op === '÷' && nextTermVal < target) continue;
+          if (op === '÷' && n === 0) continue;
+          const nextFrac =
+            op === '×' ? reduceFrac(termNum * n, termDen) : reduceFrac(termNum, termDen * n);
+          if (!nextFrac) continue;
+          if (
+            mathMode === 'simple' &&
+            effectiveAllowedOps.length === 1 &&
+            !hasNegativeNums &&
+            nextFrac.den === 1
+          ) {
+            if (op === '×' && nextFrac.num > target) continue;
+            if (op === '÷' && nextFrac.num < target) continue;
           }
 
           numCounts[i]--;
           chosenNums.push(n);
-          if (dfs(depth + 1, runningAdd, termSign, nextTermVal)) return true;
+          if (dfsBedmas(depth + 1, addNum, addDen, termSign, nextFrac.num, nextFrac.den)) {
+            return true;
+          }
           chosenNums.pop();
           numCounts[i]++;
           if (timedOut) break;
@@ -1029,7 +1495,17 @@ export function checkBoardSolvable(
     return false;
   }
 
-  const found = dfs(0, 0, '+', 0);
+  let found = false;
+  if (evalMode === 'left-to-right') {
+    found = dfsLeftToRight(0, 0, false);
+  } else {
+    found = dfsBedmas(0, 0, 1, '+', 0, 1);
+    if (!found && !timedOut && mathMode === 'operator') {
+      // BEDMAS allows ( ) prefix wrapping at any step
+      found = dfsLeftToRight(0, 0, true);
+    }
+  }
+
   if (found) {
     return { solvable: true, solutionTileIds: buildSolutionIds(), timedOut: false };
   }
@@ -1082,16 +1558,16 @@ function getPrioritizedCompletionNumbers(params: {
         addIfValid(target + a);
         addIfValid(a - target);
       } else if (simpleOperator === '×') {
-        if (target % a === 0 && a >= 1) addIfValid(target / a);
+        if (target % a === 0 && a !== 0) addIfValid(target / a);
       } else if (simpleOperator === '÷') {
-        if (a >= 1) addIfValid(a * target);
-        if (a >= target && a % target === 0) addIfValid(a / target);
+        if (a !== 0) addIfValid(a * target);
+        if (Math.abs(a) >= target && a % target === 0) addIfValid(a / target);
       }
     } else {
       addIfValid(target - a);
       addIfValid(a - target);
-      if (target % a === 0 && a >= 1) addIfValid(target / a);
-      if (a >= target && a % target === 0) addIfValid(a / target);
+      if (target % a === 0 && a !== 0) addIfValid(target / a);
+      if (Math.abs(a) >= target && a % target === 0) addIfValid(a / target);
     }
   }
 
@@ -1287,7 +1763,7 @@ function findConstructive3TileRecipe(
   const activePool =
     simpleRoundPool && simpleRoundPool.length > 0
       ? simpleRoundPool
-      : generateSimpleRoundPool({ target, simpleOperator, rng });
+      : generateSimpleRoundPool({ target, simpleOperator, difficulty, rng });
 
   const filler = drawWeightedNumber({
     difficulty,

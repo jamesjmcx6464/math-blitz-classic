@@ -33,6 +33,8 @@ import {
 } from './utils/hexPhysics';
 import {
   getAllowedOperators,
+  getEvaluationMode,
+  normalizeParenWraps,
   clampTarget,
   isCompositeTarget,
   nearestCompositeTarget,
@@ -196,6 +198,9 @@ export default function App() {
   fallingTilesRef.current = fallingTiles;
 
   const [selectedTiles, setSelectedTiles] = useState<HexTile[]>([]);
+  const [parenWraps, setParenWraps] = useState<number[]>([]);
+  const parenWrapsRef = useRef<number[]>([]);
+  parenWrapsRef.current = parenWraps;
 
   const [floatingScores, setFloatingScores] = useState<FloatingScore[]>([]);
   const [pulsingTileIds, setPulsingTileIds] = useState<Set<string>>(new Set());
@@ -300,6 +305,8 @@ export default function App() {
     setDifficulty(level);
     difficultyRef.current = level;
     saveDifficulty(level);
+    setParenWraps([]);
+    parenWrapsRef.current = [];
     const preset = DIFFICULTY_PRESETS[level];
     spawnIntervalRef.current = preset.spawnIntervalMs;
     const allowed = getAllowedOperators(level);
@@ -613,6 +620,8 @@ export default function App() {
       fallingTilesRef.current = [];
       setFallingTiles([]);
       setSelectedTiles([]);
+      setParenWraps([]);
+      parenWrapsRef.current = [];
 
       const turnSummary: TurnSummary = {
         teamName: curTeam.name,
@@ -761,6 +770,8 @@ export default function App() {
       setSelectedTiles((prev) => {
         const filtered = prev.filter((st) => nextFrozen.some((nf) => nf.id === st.id && !replaceMap.has(nf.id)));
         if (filtered.length !== prev.length) {
+          setParenWraps([]);
+          parenWrapsRef.current = [];
           return [];
         }
         return prev;
@@ -973,6 +984,7 @@ export default function App() {
         ? generateSimpleRoundPool({
             target: nextTarget,
             simpleOperator: nextSimpleOp,
+            difficulty: difficultyRef.current,
             rng: rngRef.current,
           })
         : [];
@@ -993,6 +1005,8 @@ export default function App() {
     setFrozenTiles([]);
     setFallingTiles([]);
     setSelectedTiles([]);
+    setParenWraps([]);
+    parenWrapsRef.current = [];
     setFloatingScores([]);
     setPulsingTileIds(new Set());
     setHintTileIds(new Set());
@@ -1233,6 +1247,7 @@ export default function App() {
         ? generateSimpleRoundPool({
             target: cur.config.target,
             simpleOperator: cur.config.simpleOperator,
+            difficulty: difficultyRef.current,
             rng: rngRef.current,
           })
         : [];
@@ -1246,12 +1261,16 @@ export default function App() {
       fallingTilesRef.current = [];
       setFallingTiles([]);
       setSelectedTiles([]);
+      setParenWraps([]);
+      parenWrapsRef.current = [];
       setFloatingScores([]);
       setPulsingTileIds(new Set());
       setHintTileIds(new Set());
     } else {
       fallingTilesRef.current = [];
       setFallingTiles([]);
+      setParenWraps([]);
+      parenWrapsRef.current = [];
     }
 
     setActiveTurnEquations([]);
@@ -1325,7 +1344,30 @@ export default function App() {
       soundManager.playDeselect();
       triggerTilePulse(tile.id);
 
-      setSelectedTiles((prev) => prev.filter((_, i) => i !== idx));
+      const remaining = selectedTiles.filter((_, i) => i !== idx);
+      setSelectedTiles(remaining);
+
+      if (getEvaluationMode(difficultyRef.current) === 'bedmas') {
+        let remainingNums = 0;
+        if (mathModeRef.current === 'simple') {
+          remainingNums = remaining.length;
+        } else {
+          for (let i = 0; i < remaining.length; i++) {
+            if (i % 2 === 0 && remaining[i].tile.kind === 'number') {
+              remainingNums++;
+            } else if (i % 2 === 1 && remaining[i].tile.kind === 'operator') {
+              continue;
+            } else {
+              remainingNums = 0;
+              break;
+            }
+          }
+        }
+        const nextWraps = normalizeParenWraps(parenWrapsRef.current, remainingNums);
+        setParenWraps(nextWraps);
+        parenWrapsRef.current = nextWraps;
+      }
+
       setErrorMessage(null);
     },
     [markUserInput, selectedTiles, triggerTilePulse]
@@ -1377,8 +1419,66 @@ export default function App() {
     soundManager.playDeselect();
     selectedTiles.forEach((t) => triggerTilePulse(t.id));
     setSelectedTiles([]);
+    setParenWraps([]);
+    parenWrapsRef.current = [];
     setErrorMessage(null);
   }, [markUserInput, selectedTiles, triggerTilePulse]);
+
+  const handleWrapParens = useCallback(() => {
+    if (
+      screenRef.current !== 'PLAYING' ||
+      getEvaluationMode(difficultyRef.current) !== 'bedmas'
+    ) {
+      return;
+    }
+    markUserInput();
+    let numCount = 0;
+    let opCount = 0;
+    let validAlt = true;
+
+    if (mathModeRef.current === 'simple') {
+      numCount = selectedTiles.length;
+      opCount = Math.max(0, numCount - 1);
+    } else {
+      for (let i = 0; i < selectedTiles.length; i++) {
+        const t = selectedTiles[i].tile;
+        if (i % 2 === 0 && t.kind === 'number') {
+          numCount++;
+        } else if (i % 2 === 1 && t.kind === 'operator') {
+          opCount++;
+        } else {
+          validAlt = false;
+          break;
+        }
+      }
+    }
+
+    if (!validAlt || numCount < 2 || numCount !== opCount + 1) {
+      return;
+    }
+
+    const wrapEndIdx = numCount - 1;
+    const normalized = normalizeParenWraps(parenWrapsRef.current, numCount);
+    if (normalized.includes(wrapEndIdx)) return;
+
+    soundManager.playSelect();
+    const nextWraps = [...normalized, wrapEndIdx];
+    setParenWraps(nextWraps);
+    parenWrapsRef.current = nextWraps;
+    setErrorMessage(null);
+  }, [markUserInput, selectedTiles]);
+
+  const handleUnwrapParen = useCallback(
+    (wrapEndIdx: number) => {
+      markUserInput();
+      soundManager.playDeselect();
+      const nextWraps = parenWrapsRef.current.filter((w) => w !== wrapEndIdx);
+      setParenWraps(nextWraps);
+      parenWrapsRef.current = nextWraps;
+      setErrorMessage(null);
+    },
+    [markUserInput]
+  );
 
   const bumpPaceOnEquation = () => {
     if (
@@ -1410,6 +1510,8 @@ export default function App() {
     const activeDiff = difficultyRef.current;
     const activeMath = mathModeRef.current;
     const activeTarget = targetRef.current;
+    const activeWraps =
+      getEvaluationMode(activeDiff) === 'bedmas' ? parenWrapsRef.current : undefined;
 
     let eqString = '';
     let numberCount = 0;
@@ -1420,22 +1522,49 @@ export default function App() {
       const ops = new Array<MathOperator>(Math.max(0, nums.length - 1)).fill(
         simpleOperatorRef.current
       );
-      eqString = formatEquationString(nums, ops);
+      eqString = formatEquationString(nums, ops, {
+        difficulty: activeDiff,
+        parenWraps: activeWraps,
+      });
       numberCount = nums.length;
       evalRes = evaluateEquation(nums, ops, {
         difficulty: activeDiff,
         mathMode: activeMath,
         target: activeTarget,
+        parenWraps: activeWraps,
       });
     } else {
       const tokens = selectedTiles.map((t) => t.tile);
-      eqString = tokens.map((t) => t.display).join(' ');
       numberCount = tokens.filter((t) => t.kind === 'number').length;
       evalRes = evaluateOperatorTokens(tokens, {
         difficulty: activeDiff,
         mathMode: activeMath,
         target: activeTarget,
+        parenWraps: activeWraps,
       });
+
+      const parsedNums: number[] = [];
+      const parsedOps: MathOperator[] = [];
+      let validSeq = tokens.length >= 3 && tokens.length % 2 === 1;
+      if (validSeq) {
+        for (let i = 0; i < tokens.length; i++) {
+          const tk = tokens[i];
+          if (i % 2 === 0 && tk.kind === 'number' && tk.numValue !== undefined) {
+            parsedNums.push(tk.numValue);
+          } else if (i % 2 === 1 && tk.kind === 'operator' && tk.opValue) {
+            parsedOps.push(tk.opValue);
+          } else {
+            validSeq = false;
+            break;
+          }
+        }
+      }
+      eqString = validSeq
+        ? formatEquationString(parsedNums, parsedOps, {
+            difficulty: activeDiff,
+            parenWraps: activeWraps,
+          })
+        : tokens.map((t) => t.display).join(' ');
     }
 
     if (!evalRes.isValidMath || !evalRes.matchesTarget) {
@@ -1448,6 +1577,8 @@ export default function App() {
       );
       // Clear selection on failure per spec
       setSelectedTiles([]);
+      setParenWraps([]);
+      parenWrapsRef.current = [];
       setTimeout(() => setIsShaking(false), 400);
       return;
     }
@@ -1548,6 +1679,8 @@ export default function App() {
     setFrozenTiles([...frozenTilesRef.current]);
     setFallingTiles([...fallingTilesRef.current]);
     setSelectedTiles([]);
+    setParenWraps([]);
+    parenWrapsRef.current = [];
     setErrorMessage(null);
 
     const prefersReducedMotion =
@@ -1611,6 +1744,12 @@ export default function App() {
       } else if (e.key.toLowerCase() === 'p') {
         e.preventDefault();
         setScreen('PAUSED');
+      } else if (
+        (e.key === '(' || e.key === ')') &&
+        getEvaluationMode(difficultyRef.current) === 'bedmas'
+      ) {
+        e.preventDefault();
+        handleWrapParens();
       }
     };
 
@@ -1946,6 +2085,9 @@ export default function App() {
             mathMode={mathMode}
             difficulty={difficulty}
             target={target}
+            parenWraps={parenWraps}
+            onWrapParens={handleWrapParens}
+            onUnwrapParen={handleUnwrapParen}
             onClear={handleClearSelection}
             onSubmit={handleSubmitEquation}
             onRemoveTile={handleRemoveTile}

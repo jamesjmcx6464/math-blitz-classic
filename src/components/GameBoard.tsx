@@ -242,6 +242,7 @@ export const GameBoard: React.FC<GameBoardProps> = ({
     const isPulsing = pulsingTileIds.has(tile.id);
     const isHinted = hintTileIds?.has(tile.id) ?? false;
     const isOperator = tile.tile.kind === 'operator' && tile.tile.opValue;
+    const isNegativeNum = tile.tile.kind === 'number' && (tile.tile.numValue ?? 0) < 0;
 
     let fill: string;
     let stroke: string;
@@ -263,6 +264,11 @@ export const GameBoard: React.FC<GameBoardProps> = ({
       fill = opVis.fill;
       stroke = opVis.stroke;
       textFill = opVis.textFill;
+      filterEffect = isFallingStyle ? 'url(#fallingGlow)' : 'url(#tileShadow)';
+    } else if (isNegativeNum) {
+      fill = isFallingStyle ? 'url(#negFallingGradient)' : 'url(#negTileGradient)';
+      stroke = '#e11d48';
+      textFill = '#881337';
       filterEffect = isFallingStyle ? 'url(#fallingGlow)' : 'url(#tileShadow)';
     } else if (isFallingStyle) {
       fill = 'url(#fallingGradient)';
@@ -397,6 +403,20 @@ export const GameBoard: React.FC<GameBoardProps> = ({
             <stop offset="0%" stopColor="#67e8f9" />
             <stop offset="70%" stopColor="#22d3ee" />
             <stop offset="100%" stopColor="#06b6d4" />
+          </linearGradient>
+
+          {/* Negative frozen number tile gradient */}
+          <linearGradient id="negTileGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" stopColor="#fff1f2" />
+            <stop offset="60%" stopColor="#ffe4e6" />
+            <stop offset="100%" stopColor="#fecdd3" />
+          </linearGradient>
+
+          {/* Negative falling number tile gradient */}
+          <linearGradient id="negFallingGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" stopColor="#fda4af" />
+            <stop offset="70%" stopColor="#fb7185" />
+            <stop offset="100%" stopColor="#f43f5e" />
           </linearGradient>
 
           {/* Operator + (Emerald) */}
