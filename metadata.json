@@ -1,0 +1,8 @@
+{
+  "name": "Math Blitz Classic",
+  "description": "Fast-paced hexagonal falling-number math puzzle game. Build equations to hit the target before the stack reaches the top.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
