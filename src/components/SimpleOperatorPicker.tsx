@@ -33,7 +33,6 @@ const OP_META: Record<
     name: 'Div',
     activeClass: 'bg-orange-500 text-slate-950 border-orange-300 shadow-md shadow-orange-500/25',
     idleClass: 'bg-slate-800/80 hover:bg-slate-800 text-orange-300 border-slate-700',
-    minDiffLabel: 'Normal+',
   },
 };
 

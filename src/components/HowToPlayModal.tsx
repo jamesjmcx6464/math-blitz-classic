@@ -48,10 +48,11 @@ export const HowToPlayModal: React.FC<HowToPlayModalProps> = ({ onClose }) => {
               2
             </span>
             <div>
-              <strong className="text-white block">Whole-number division only</strong>
+              <strong className="text-white block">Whole-number division &amp; checking</strong>
               <p className="mt-0.5 leading-relaxed">
                 Every <span className="font-mono font-bold text-sky-300">÷</span> step must divide evenly with no remainder in evaluation order (for example,{' '}
-                <span className="font-mono text-rose-300">3 ÷ 2 × 4</span> is not allowed). Beginner, Easy, and Normal cannot dip below 0; Hard and Nightmare allow negative intermediates (shown in red).
+                <span className="font-mono text-rose-300">3 ÷ 2 × 4</span> is not allowed). Beginner, Easy, and Normal cannot dip below 0; Hard and Nightmare allow negative intermediate steps. Press{' '}
+                <strong className="text-white">Enter</strong> to check your equation—feedback and points are shown after you submit!
               </p>
             </div>
           </div>
@@ -64,13 +65,10 @@ export const HowToPlayModal: React.FC<HowToPlayModalProps> = ({ onClose }) => {
               <strong className="text-white block">Scoring, 1s &amp; cancelling steps</strong>
               <p className="mt-0.5 leading-relaxed">
                 Use 2–6 numbers to hit the target. Longer equations earn more points, and{' '}
-                <span className="font-mono text-emerald-300">× ÷</span> steps add a bonus.{' '}
-                <strong className="text-amber-200">Null tiles score 0</strong> and don&apos;t count toward the 2-number minimum: any{' '}
-                <span className="font-mono text-slate-100">1</span> next to{' '}
-                <span className="font-mono text-slate-100">×</span> or{' '}
-                <span className="font-mono text-slate-100">÷</span>, and cancelling pairs like{' '}
+                <span className="font-mono text-emerald-300">× ÷</span> steps add a bonus (same scoring in both modes).{' '}
+                <strong className="text-amber-200">Cancelling pairs score 0</strong> and don&apos;t count toward the 2-number minimum (such as{' '}
                 <span className="font-mono text-slate-100">+3 −3</span> or{' '}
-                <span className="font-mono text-slate-100">×4 ÷4</span>.
+                <span className="font-mono text-slate-100">×4 ÷4</span>); <span className="font-mono text-slate-100">1</span>s still score normally.
               </p>
             </div>
           </div>
@@ -80,11 +78,11 @@ export const HowToPlayModal: React.FC<HowToPlayModalProps> = ({ onClose }) => {
               4
             </span>
             <div>
-              <strong className="text-white block">Pre-game target &amp; mode setup</strong>
+              <strong className="text-white block">Simple mode vs. Equation mode</strong>
               <p className="mt-0.5 leading-relaxed">
                 Pick your target number (<span className="font-mono text-slate-100">2–100</span>) before playing. In{' '}
-                <strong className="text-white">Simple mode</strong>, choose your operator (<span className="font-mono text-slate-100">+ − × ÷</span>) before the round starts—only numbers fall, and your chosen operator is auto-inserted for the entire round. In{' '}
-                <strong className="text-white">Operator mode</strong>, operator tiles fall on the board too, and your score is doubled!
+                <strong className="text-white">Simple mode</strong>, choose your operator (<span className="font-mono text-slate-100">+ − × ÷</span>) before the round starts—each round spawns numbers from a random set of matching pairs for that target, and your operator is auto-inserted. In{' '}
+                <strong className="text-white">Equation mode</strong>, operator tiles fall on the board too so you can mix operations.
               </p>
             </div>
           </div>

@@ -299,18 +299,10 @@ export function evaluateEquation(
 
   const result = runningTotal;
 
-  // Step 3: Identify null tiles
+  // Step 3: Identify null tiles (cancelling pairs only; 1s next to × or ÷ score normally)
   const isNull = new Array<boolean>(nums.length).fill(false);
 
-  // Rule A: A 1 on either side of × or ÷
-  for (let i = 0; i < ops.length; i++) {
-    if (ops[i] === '×' || ops[i] === '÷') {
-      if (nums[i] === 1) isNull[i] = true;
-      if (nums[i + 1] === 1) isNull[i + 1] = true;
-    }
-  }
-
-  // Rule B: Cancel pairs matched left to right without overlap
+  // Cancel pairs matched left to right without overlap
   let i = -1;
   while (i + 1 < ops.length) {
     const opA: MathOperator = i === -1 ? '+' : ops[i];
@@ -356,10 +348,7 @@ export function evaluateEquation(
     }
   }
 
-  let score = tilePoints + mulDivBonus;
-  if (mathMode === 'operator') {
-    score *= 2;
-  }
+  const score = tilePoints + mulDivBonus;
 
   if (scoringTileCount < 2) {
     return {
@@ -548,8 +537,8 @@ export interface WeightedNumberCandidate {
 }
 
 const OPERATOR_WEIGHTS_BY_DIFFICULTY: Record<DifficultyLevel, Record<MathOperator, number>> = {
-  beginner: { '+': 55, '−': 45, '×': 0, '÷': 0 },
-  easy: { '+': 40, '−': 30, '×': 30, '÷': 0 },
+  beginner: { '+': 45, '−': 40, '×': 0, '÷': 15 },
+  easy: { '+': 35, '−': 25, '×': 25, '÷': 15 },
   normal: { '+': 30, '−': 25, '×': 30, '÷': 15 },
   hard: { '+': 25, '−': 25, '×': 30, '÷': 20 },
   nightmare: { '+': 20, '−': 20, '×': 30, '÷': 30 },
@@ -563,22 +552,86 @@ export function getProperFactors(n: number): number[] {
   return factors;
 }
 
+function shuffleWithRng<T>(items: T[], rng: () => number): T[] {
+  const arr = [...items];
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    const tmp = arr[i];
+    arr[i] = arr[j];
+    arr[j] = tmp;
+  }
+  return arr;
+}
+
+/**
+ * Generates a fixed round pool of at most 12 numbers (up to 6 randomly chosen pairs)
+ * that reach target T with the chosen Simple-mode operator:
+ * - Addition (+): pairs (a, T - a) with 1 <= a <= T - 1
+ * - Subtraction (−): pairs (a, a - T) with every number between 1 and 4*T
+ * - Multiplication (×): proper factor pairs (a, T / a)
+ * - Division (÷): pairs (a, a / T) = (k*T, k) with 2 <= k <= 12 (max 12*T)
+ */
+export function generateSimpleRoundPool(params: {
+  target: number;
+  simpleOperator: MathOperator;
+  rng?: () => number;
+}): number[] {
+  const { simpleOperator, rng = Math.random } = params;
+  const T = clampTarget(params.target);
+  const pairs: Array<[number, number]> = [];
+
+  if (simpleOperator === '+') {
+    const maxA = Math.floor(T / 2);
+    for (let a = 1; a <= maxA; a++) {
+      const b = T - a;
+      if (b >= 1 && b <= T - 1) {
+        pairs.push([a, b]);
+      }
+    }
+  } else if (simpleOperator === '−') {
+    // a - b = T with 1 <= a <= 4*T and 1 <= b <= 4*T => 1 <= b <= 3*T and a = b + T
+    const maxB = 3 * T;
+    for (let b = 1; b <= maxB; b++) {
+      pairs.push([b + T, b]);
+    }
+  } else if (simpleOperator === '×') {
+    const limit = Math.floor(Math.sqrt(T));
+    for (let a = 2; a <= limit; a++) {
+      if (T % a === 0) {
+        pairs.push([a, T / a]);
+      }
+    }
+    if (pairs.length === 0) {
+      pairs.push([1, T]);
+    }
+  } else {
+    // Simple ÷: pairs (k * T, k) for 2 <= k <= 12 (reasonable max 12 * T)
+    for (let k = 2; k <= 12; k++) {
+      pairs.push([k * T, k]);
+    }
+  }
+
+  const chosen = shuffleWithRng(pairs, rng).slice(0, 6);
+  const pool: number[] = [];
+  for (const [a, b] of chosen) {
+    pool.push(a, b);
+  }
+  return pool;
+}
+
 /**
  * Builds the valid number pool and normalized weights for the given mode, operator, and target T:
- * - Simple Addition (+): numbers 1 .. T-1
- * - Simple Subtraction (−): subtrahends 1 .. T-1 plus minuends T+1 .. min(199, T + max(4, T-1))
- *   so every subtraction equation has valid positive integers >= 1 that can equal T cleanly.
- * - Simple Multiplication (×): proper factors of T (2..T-1) + rare 1, avoiding T itself.
- * - Simple Division (÷): multiples k*T (k >= 2) + divisors (2..10) + rare 1, avoiding T itself.
- * - Operator mode (mixed ops): numbers 1 .. T-1 weighted toward factors of T, keeping 1 rare.
+ * - Simple mode: strictly draws from the fixed round pool (up to 12 numbers from <= 6 pairs).
+ * - Equation mode ('operator'): numbers 1 .. T-1 weighted toward factors of T, keeping 1 rare.
  */
 export function getNumberSpawnCandidates(params: {
   difficulty: DifficultyLevel;
   mathMode: MathMode;
   simpleOperator?: MathOperator;
   target: number;
+  simpleRoundPool?: number[];
 }): WeightedNumberCandidate[] {
-  const { mathMode, simpleOperator = '+', target } = params;
+  const { mathMode, simpleOperator = '+', target, simpleRoundPool } = params;
   const T = clampTarget(target);
   const entries: Array<{ value: number; rawWeight: number }> = [];
 
@@ -599,74 +652,18 @@ export function getNumberSpawnCandidates(params: {
       }
       entries.push({ value: n, rawWeight: w });
     }
-  } else if (simpleOperator === '+') {
-    if (T <= 2) {
-      return [{ value: 1, weight: 1 }];
-    }
-    for (let n = 1; n <= T - 1; n++) {
-      const w = n === 1 && T > 4 ? 0.55 : 1.0;
-      entries.push({ value: n, rawWeight: w });
-    }
-  } else if (simpleOperator === '−') {
-    // Subtrahends in 1..T-1 (52% pool) + minuends in T+1..min(199, T + max(4, T-1)) (48% pool)
-    const subSpan = Math.max(1, T - 1);
-    const minEnd = Math.min(199, T + Math.max(4, T - 1));
-    const minSpan = Math.max(1, minEnd - T);
-
-    for (let n = 1; n <= T - 1; n++) {
-      const w = (n === 1 && T > 4 ? 0.65 : 1.0) * (52 / subSpan);
-      entries.push({ value: n, rawWeight: w });
-    }
-    for (let m = T + 1; m <= minEnd; m++) {
-      entries.push({ value: m, rawWeight: 48 / minSpan });
-    }
-  } else if (simpleOperator === '×') {
-    const properFactors = getProperFactors(T);
-    if (properFactors.length > 0) {
-      const factorWeightEach = 95 / properFactors.length;
-      for (const f of properFactors) {
-        // Favor balanced middle factors slightly when many exist
-        const distFromSqrt = Math.abs(Math.log(f) - Math.log(Math.sqrt(T)));
-        const bias = 1 / (1 + 0.15 * distFromSqrt);
-        entries.push({ value: f, rawWeight: factorWeightEach * bias });
-      }
-      // Keep 1 rare (~5%)
-      entries.push({ value: 1, rawWeight: 5 });
-    } else {
-      // Fallback for prime targets if somehow reached
-      entries.push({ value: T, rawWeight: 50 });
-      entries.push({ value: 1, rawWeight: 50 });
-    }
   } else {
-    // Simple ÷: multiples k*T (k >= 2) + divisors + rare 1
-    const baseMultipliers = [2, 3, 4, 5, 6, 8, 9, 10];
-    const activeMultipliers = baseMultipliers.filter((k) => k * T <= 400);
-    const multipliers = activeMultipliers.length >= 2 ? activeMultipliers : [2, 3, 4];
-
-    const multWeightTotal = 45;
-    const divWeightTotal = 52;
-
-    for (let idx = 0; idx < multipliers.length; idx++) {
-      const k = multipliers[idx];
-      const decay = 1 / (1 + idx * 0.18);
-      entries.push({ value: k * T, rawWeight: (multWeightTotal / multipliers.length) * decay });
+    const activePool =
+      simpleRoundPool && simpleRoundPool.length > 0
+        ? simpleRoundPool
+        : generateSimpleRoundPool({ target: T, simpleOperator });
+    const counts = new Map<number, number>();
+    for (const val of activePool) {
+      counts.set(val, (counts.get(val) ?? 0) + 1);
     }
-
-    // Divisors: small integers >= 2 that divide our multiples cleanly (2..10, plus proper factors of active multipliers)
-    const divisorSet = new Set<number>([2, 3, 4, 5, 6]);
-    for (const k of multipliers) {
-      if (k <= 10) divisorSet.add(k);
-      for (const f of getProperFactors(k)) divisorSet.add(f);
+    for (const [val, cnt] of counts.entries()) {
+      entries.push({ value: val, rawWeight: cnt });
     }
-    const divisors = Array.from(divisorSet).sort((a, b) => a - b);
-    for (let idx = 0; idx < divisors.length; idx++) {
-      const d = divisors[idx];
-      const decay = 1 / (1 + idx * 0.15);
-      entries.push({ value: d, rawWeight: (divWeightTotal / divisors.length) * decay });
-    }
-
-    // Keep 1 rare (~3%)
-    entries.push({ value: 1, rawWeight: 3 });
   }
 
   const sum = entries.reduce((acc, e) => acc + e.rawWeight, 0);
@@ -677,7 +674,7 @@ export function getNumberSpawnCandidates(params: {
 }
 
 /**
- * Returns normalized operator probabilities for allowed operators (Operator mode).
+ * Returns normalized operator probabilities for allowed operators (Equation mode).
  */
 export function getOperatorSpawnWeights(
   difficulty: DifficultyLevel
@@ -696,14 +693,23 @@ export function drawWeightedNumber(params: {
   mathMode: MathMode;
   simpleOperator?: MathOperator;
   target: number;
+  simpleRoundPool?: number[];
   rng?: () => number;
 }): MathTileInfo {
-  const { difficulty, mathMode, simpleOperator = '+', target, rng = Math.random } = params;
+  const {
+    difficulty,
+    mathMode,
+    simpleOperator = '+',
+    target,
+    simpleRoundPool,
+    rng = Math.random,
+  } = params;
   const candidates = getNumberSpawnCandidates({
     difficulty,
     mathMode,
     simpleOperator,
     target,
+    simpleRoundPool,
   });
   const r = rng();
   let acc = 0;
@@ -733,7 +739,7 @@ export function drawWeightedOperator(
 }
 
 /**
- * Draws next math tile respecting Simple/Operator mode, 60/40 number/operator split,
+ * Draws next math tile respecting Simple/Equation mode, 60/40 number/operator split,
  * and 30-50% operator board ratio clamp.
  */
 export function drawMathTile(params: {
@@ -742,6 +748,7 @@ export function drawMathTile(params: {
   simpleOperator?: MathOperator;
   target: number;
   boardTiles: MathTileInfo[];
+  simpleRoundPool?: number[];
   rng?: () => number;
 }): MathTileInfo {
   const {
@@ -750,11 +757,19 @@ export function drawMathTile(params: {
     simpleOperator = '+',
     target,
     boardTiles,
+    simpleRoundPool,
     rng = Math.random,
   } = params;
 
   if (mathMode === 'simple') {
-    return drawWeightedNumber({ difficulty, mathMode, simpleOperator, target, rng });
+    return drawWeightedNumber({
+      difficulty,
+      mathMode,
+      simpleOperator,
+      target,
+      simpleRoundPool,
+      rng,
+    });
   }
 
   const total = boardTiles.length;
@@ -778,7 +793,14 @@ export function drawMathTile(params: {
 
   return spawnOperator
     ? drawWeightedOperator(difficulty, rng)
-    : drawWeightedNumber({ difficulty, mathMode, simpleOperator, target, rng });
+    : drawWeightedNumber({
+        difficulty,
+        mathMode,
+        simpleOperator,
+        target,
+        simpleRoundPool,
+        rng,
+      });
 }
 
 // ============================================================================
@@ -1060,16 +1082,16 @@ function getPrioritizedCompletionNumbers(params: {
         addIfValid(target + a);
         addIfValid(a - target);
       } else if (simpleOperator === '×') {
-        if (target % a === 0 && a > 1) addIfValid(target / a);
+        if (target % a === 0 && a >= 1) addIfValid(target / a);
       } else if (simpleOperator === '÷') {
-        if (a > 1) addIfValid(a * target);
-        if (a > target && a % target === 0) addIfValid(a / target);
+        if (a >= 1) addIfValid(a * target);
+        if (a >= target && a % target === 0) addIfValid(a / target);
       }
     } else {
       addIfValid(target - a);
       addIfValid(a - target);
-      if (target % a === 0 && a > 1) addIfValid(target / a);
-      if (a > target && a % target === 0) addIfValid(a / target);
+      if (target % a === 0 && a >= 1) addIfValid(target / a);
+      if (a >= target && a % target === 0) addIfValid(a / target);
     }
   }
 
@@ -1086,6 +1108,7 @@ export function pickHelperTile(params: {
   difficulty: DifficultyLevel;
   mathMode: MathMode;
   simpleOperator?: MathOperator;
+  simpleRoundPool?: number[];
   rng?: () => number;
 }): { tile: MathTileInfo; createdSolution: boolean } {
   const {
@@ -1094,6 +1117,7 @@ export function pickHelperTile(params: {
     difficulty,
     mathMode,
     simpleOperator = '+',
+    simpleRoundPool,
     rng = Math.random,
   } = params;
 
@@ -1102,6 +1126,7 @@ export function pickHelperTile(params: {
     mathMode,
     simpleOperator,
     target,
+    simpleRoundPool,
   });
   const opWeights = getOperatorSpawnWeights(difficulty);
   const validNumMap = new Map<number, number>(numCandidates.map((c) => [c.value, c.weight]));
@@ -1205,6 +1230,7 @@ export function pickHelperTile(params: {
       simpleOperator,
       target,
       boardTiles: boardTiles.map((b) => b.tile),
+      simpleRoundPool,
       rng,
     }),
     createdSolution: false,
@@ -1212,13 +1238,14 @@ export function pickHelperTile(params: {
 }
 
 /**
- * Generates a guaranteed 2- or 3-tile recipe within the valid number pool for rescue fallback.
+ * Generates a guaranteed 2- or 3-tile recipe strictly within the active pool for rescue fallback.
  */
 function findConstructive3TileRecipe(
   target: number,
   difficulty: DifficultyLevel,
   mathMode: MathMode,
   simpleOperator: MathOperator,
+  simpleRoundPool: number[] | undefined,
   rng: () => number
 ): MathTileInfo[] | null {
   const evalOptions: EvaluateOptions = { difficulty, mathMode, target };
@@ -1227,16 +1254,15 @@ function findConstructive3TileRecipe(
     mathMode,
     simpleOperator,
     target,
+    simpleRoundPool,
   })
-    .map((c) => c.value)
-    .filter((v) => v > 1 || target <= 2);
+    .map((c) => c.value);
 
   const fallbackPool =
     numCandidates.length > 0 ? numCandidates : [1, Math.max(1, target - 1)];
 
   if (mathMode === 'operator') {
     const allowedOps = getAllowedOperators(difficulty);
-    // Try direct a op b = target
     for (let attempt = 0; attempt < 150; attempt++) {
       const a = fallbackPool[Math.floor(rng() * fallbackPool.length)];
       const b = fallbackPool[Math.floor(rng() * fallbackPool.length)];
@@ -1246,7 +1272,6 @@ function findConstructive3TileRecipe(
         return [makeNumberTile(a), makeOperatorTile(op), makeNumberTile(b)];
       }
     }
-    // Deterministic fallback for target >= 2 in [1..T-1]
     if (target >= 2) {
       const a = Math.max(1, Math.floor(target / 2));
       const b = target - a;
@@ -1258,48 +1283,37 @@ function findConstructive3TileRecipe(
     return null;
   }
 
-  // Simple mode: construct 2-number solution + 3rd valid weighted tile
+  // Simple mode: pick a valid solving pair directly from simpleRoundPool (or candidate pool) + 3rd pool filler
+  const activePool =
+    simpleRoundPool && simpleRoundPool.length > 0
+      ? simpleRoundPool
+      : generateSimpleRoundPool({ target, simpleOperator, rng });
+
   const filler = drawWeightedNumber({
     difficulty,
     mathMode,
     simpleOperator,
     target,
+    simpleRoundPool: activePool,
     rng,
   });
 
-  if (simpleOperator === '+') {
-    const a = target <= 2 ? 1 : 1 + Math.floor(rng() * (target - 1));
-    const b = target - a;
-    if (b >= 1) {
-      const ev = evaluateEquation([a, b], ['+'], evalOptions);
+  const validPairs: Array<[number, number]> = [];
+  for (let i = 0; i < activePool.length; i++) {
+    for (let j = 0; j < activePool.length; j++) {
+      if (i === j) continue;
+      const a = activePool[i];
+      const b = activePool[j];
+      const ev = evaluateEquation([a, b], [simpleOperator], evalOptions);
       if (ev.isValidMath && ev.matchesTarget) {
-        return [makeNumberTile(a), makeNumberTile(b), filler];
+        validPairs.push([a, b]);
       }
     }
-  } else if (simpleOperator === '−') {
-    const k = target <= 2 ? 1 : 1 + Math.floor(rng() * (target - 1));
-    const a = target + k;
-    const ev = evaluateEquation([a, k], ['−'], evalOptions);
-    if (ev.isValidMath && ev.matchesTarget) {
-      return [makeNumberTile(a), makeNumberTile(k), filler];
-    }
-  } else if (simpleOperator === '×') {
-    const factors = getProperFactors(target);
-    if (factors.length > 0) {
-      const a = factors[Math.floor(rng() * factors.length)];
-      const b = target / a;
-      const ev = evaluateEquation([a, b], ['×'], evalOptions);
-      if (ev.isValidMath && ev.matchesTarget) {
-        return [makeNumberTile(a), makeNumberTile(b), filler];
-      }
-    }
-  } else if (simpleOperator === '÷') {
-    const divisors = [2, 3, 4, 5, 6].filter((d) => d * target <= 500);
-    const k = divisors[Math.floor(rng() * Math.max(1, divisors.length))] || 2;
-    const ev = evaluateEquation([k * target, k], ['÷'], evalOptions);
-    if (ev.isValidMath && ev.matchesTarget) {
-      return [makeNumberTile(k * target), makeNumberTile(k), filler];
-    }
+  }
+
+  if (validPairs.length > 0) {
+    const [a, b] = validPairs[Math.floor(rng() * validPairs.length)];
+    return [makeNumberTile(a), makeNumberTile(b), filler];
   }
 
   return null;
@@ -1315,6 +1329,7 @@ export function computeBoardRescueReplacements(params: {
   difficulty: DifficultyLevel;
   mathMode: MathMode;
   simpleOperator?: MathOperator;
+  simpleRoundPool?: number[];
   rng?: () => number;
 }): Array<{ id: string; newTile: MathTileInfo }> {
   const {
@@ -1323,6 +1338,7 @@ export function computeBoardRescueReplacements(params: {
     difficulty,
     mathMode,
     simpleOperator = '+',
+    simpleRoundPool,
     rng = Math.random,
   } = params;
   if (frozenTiles.length === 0) return [];
@@ -1351,6 +1367,7 @@ export function computeBoardRescueReplacements(params: {
       difficulty,
       mathMode,
       simpleOperator,
+      simpleRoundPool,
       rng,
     });
     replacements.push(picked.tile);
@@ -1372,6 +1389,7 @@ export function computeBoardRescueReplacements(params: {
       difficulty,
       mathMode,
       simpleOperator,
+      simpleRoundPool,
       rng
     );
     if (recipe && recipe.length === 3) {

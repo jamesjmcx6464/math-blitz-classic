@@ -427,7 +427,7 @@ export const HighScoresModal: React.FC<HighScoresModalProps> = ({
                     }`}
                   >
                     <Calculator className="w-3.5 h-3.5" />
-                    <span>{mm === 'operator' ? 'Operator' : 'Simple'}</span>
+                    <span>{mm === 'operator' ? 'Equation' : 'Simple'}</span>
                   </button>
                 );
               })}

@@ -40,6 +40,7 @@ import {
   evaluateOperatorTokens,
   formatEquationString,
   drawMathTile,
+  generateSimpleRoundPool,
   checkBoardSolvable,
   pickHelperTile,
   computeBoardRescueReplacements,
@@ -249,6 +250,7 @@ export default function App() {
 
   // Solvability Director & PRNG refs
   const rngRef = useRef<() => number>(Math.random);
+  const simpleRoundPoolRef = useRef<number[]>([]);
   const recentHelperFlagsRef = useRef<boolean[]>([]);
   const solvabilityStateRef = useRef<{ solvable: boolean; solutionTileIds: string[] }>({
     solvable: true,
@@ -736,6 +738,7 @@ export default function App() {
         difficulty: difficultyRef.current,
         mathMode: mathModeRef.current,
         simpleOperator: simpleOperatorRef.current,
+        simpleRoundPool: mathModeRef.current === 'simple' ? simpleRoundPoolRef.current : undefined,
         rng: rngRef.current,
       });
 
@@ -831,6 +834,7 @@ export default function App() {
         difficulty: difficultyRef.current,
         mathMode: mathModeRef.current,
         simpleOperator: simpleOperatorRef.current,
+        simpleRoundPool: mathModeRef.current === 'simple' ? simpleRoundPoolRef.current : undefined,
         rng: rngRef.current,
       });
       drawnTile = picked.tile;
@@ -840,6 +844,7 @@ export default function App() {
         difficulty: difficultyRef.current,
         mathMode: mathModeRef.current,
         simpleOperator: simpleOperatorRef.current,
+        simpleRoundPool: mathModeRef.current === 'simple' ? simpleRoundPoolRef.current : undefined,
         target: targetRef.current,
         boardTiles: allRefs.map((b) => b.tile),
         rng: rngRef.current,
@@ -963,6 +968,14 @@ export default function App() {
     isPracticeRef.current = nextPractice;
 
     rngRef.current = Math.random;
+    simpleRoundPoolRef.current =
+      nextMathMode === 'simple'
+        ? generateSimpleRoundPool({
+            target: nextTarget,
+            simpleOperator: nextSimpleOp,
+            rng: rngRef.current,
+          })
+        : [];
     recentHelperFlagsRef.current = [];
     solvabilityStateRef.current = { solvable: true, solutionTileIds: [] };
     lastInputTimeRef.current = Date.now();
@@ -1215,6 +1228,14 @@ export default function App() {
 
     // Seed PRNG deterministically so teams share identical spawn patterns per round
     rngRef.current = createSeededRng(cur.config.spawnSeed + (cur.currentRound - 1) * 997);
+    simpleRoundPoolRef.current =
+      cur.config.mathMode === 'simple'
+        ? generateSimpleRoundPool({
+            target: cur.config.target,
+            simpleOperator: cur.config.simpleOperator,
+            rng: rngRef.current,
+          })
+        : [];
     recentHelperFlagsRef.current = [];
     solvabilityStateRef.current = { solvable: true, solutionTileIds: [] };
     lastInputTimeRef.current = Date.now();

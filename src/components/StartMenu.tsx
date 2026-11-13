@@ -206,7 +206,7 @@ export const StartMenu: React.FC<StartMenuProps> = ({
                 </span>
                 <span className="text-xs sm:text-sm font-extrabold opacity-85 block mt-0.5">
                   1:00 · Make {target} · {activePreset.label} ·{' '}
-                  {mathMode === 'operator' ? 'Operator (2×)' : `Simple (${simpleOperator})`}
+                  {mathMode === 'operator' ? 'Equation' : `Simple (${simpleOperator})`}
                 </span>
               </div>
             </div>
@@ -274,7 +274,7 @@ export const StartMenu: React.FC<StartMenuProps> = ({
             </div>
             <span className="text-xs font-semibold text-slate-400">
               {mathMode === 'operator'
-                ? 'Operators fall as tiles (2× pts)'
+                ? 'Operators & numbers fall as tiles'
                 : `Auto-inserts "${simpleOperator}" all round`}
             </span>
           </div>
@@ -300,7 +300,7 @@ export const StartMenu: React.FC<StartMenuProps> = ({
                   : 'bg-slate-800/80 border-slate-700/80 text-slate-300 hover:bg-slate-800'
               }`}
             >
-              Operator Mode (2×)
+              Equation Mode
             </button>
           </div>
 

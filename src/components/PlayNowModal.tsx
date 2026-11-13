@@ -559,8 +559,8 @@ export const PlayNowModal: React.FC<PlayNowModalProps> = ({
                         : 'bg-slate-800/70 border-slate-700 text-slate-300 hover:bg-slate-800'
                     }`}
                   >
-                    <span className="font-display font-black text-base block">Operator Mode</span>
-                    <span className="text-xs text-violet-300">Ops fall on board (2× score)</span>
+                    <span className="font-display font-black text-base block">Equation Mode</span>
+                    <span className="text-xs text-violet-300">Ops fall on board</span>
                   </button>
                 </div>
 

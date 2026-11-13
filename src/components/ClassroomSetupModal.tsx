@@ -341,7 +341,7 @@ export const ClassroomSetupModal: React.FC<ClassroomSetupModalProps> = ({
                     : 'bg-slate-800/80 border-slate-700 text-slate-300 hover:bg-slate-800'
                 }`}
               >
-                Operator Mode (2×)
+                Equation Mode
               </button>
             </div>
 

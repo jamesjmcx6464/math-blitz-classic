@@ -78,7 +78,7 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
           <div className="flex flex-wrap items-center justify-center gap-1.5 text-xs font-bold uppercase tracking-wider text-slate-600">
             <span>Make {target}</span>
             <span>·</span>
-            <span>{mathMode === 'operator' ? 'Operator Mode' : 'Simple Mode'}</span>
+            <span>{mathMode === 'operator' ? 'Equation Mode' : 'Simple Mode'}</span>
             {operator && (
               <>
                 <span>·</span>

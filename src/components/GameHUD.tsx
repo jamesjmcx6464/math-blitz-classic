@@ -132,7 +132,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
               </span>
               <span className="text-[10px] sm:text-xs font-bold text-slate-300 block leading-none">
                 R{classroomMatch.currentRound}/{classroomMatch.config.totalRounds} · Make {target} ·{' '}
-                {mathMode === 'operator' ? '2× Op' : simpleOperator}
+                {mathMode === 'operator' ? 'Equation' : simpleOperator}
               </span>
             </div>
           </div>
@@ -239,7 +239,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                 {soloPlayer.name}
               </span>
               <span className="text-[10px] font-bold text-indigo-300 block leading-none">
-                {mathMode === 'operator' ? 'Operator' : 'Simple'}
+                {mathMode === 'operator' ? 'Equation' : 'Simple'}
               </span>
             </div>
           </div>

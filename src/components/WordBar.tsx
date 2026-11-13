@@ -6,7 +6,7 @@ import {
   MathOperator,
   DifficultyLevel,
 } from '../types/game';
-import { evaluateLivePreview } from '../utils/mathEngine';
+import { getMulDivGroupRanges } from '../utils/mathEngine';
 import { Check, RotateCcw, Delete } from 'lucide-react';
 
 interface WordBarProps {
@@ -43,7 +43,6 @@ export const WordBar: React.FC<WordBarProps> = ({
   selectedTiles,
   simpleOperator,
   mathMode,
-  difficulty,
   target,
   onClear,
   onSubmit,
@@ -52,7 +51,7 @@ export const WordBar: React.FC<WordBarProps> = ({
   errorMessage,
   lastFoundEquation = null,
 }) => {
-  // Extract numbers and operators from current selection
+  // Extract numbers and operators from current selection (no evaluation/correctness check until submit)
   const { nums, ops, hasSyntaxMismatch } = useMemo(() => {
     if (mathMode === 'simple') {
       const n = selectedTiles.map((t) => t.tile.numValue ?? 0);
@@ -79,24 +78,13 @@ export const WordBar: React.FC<WordBarProps> = ({
     return { nums: n, ops: o, hasSyntaxMismatch: mismatch };
   }, [mathMode, selectedTiles, simpleOperator]);
 
-  const preview = useMemo(() => {
-    if (hasSyntaxMismatch) {
-      return {
-        liveResult: null,
-        liveError: 'Alternate numbers & operators',
-        wentNegative: false,
-        negativeNumIndices: new Set<number>(),
-        mulDivGroupRanges: [],
-        potentialScore: 0,
-        matchesTarget: false,
-        isCompleteValid: false,
-      };
-    }
-    return evaluateLivePreview(nums, ops, { difficulty, mathMode, target });
-  }, [hasSyntaxMismatch, nums, ops, difficulty, mathMode, target]);
+  const mulDivGroupRanges = useMemo(
+    () => (hasSyntaxMismatch ? [] : getMulDivGroupRanges(ops.slice(0, Math.max(0, nums.length - 1)))),
+    [hasSyntaxMismatch, ops, nums.length]
+  );
 
   const isInMulDivGroup = (numIdx: number): boolean => {
-    return preview.mulDivGroupRanges.some(
+    return mulDivGroupRanges.some(
       (r) => numIdx >= r.startNumIdx && numIdx <= r.endNumIdx
     );
   };
@@ -107,7 +95,7 @@ export const WordBar: React.FC<WordBarProps> = ({
 
   const canSubmit = selectedTiles.length > 0 && nums.length >= 2;
 
-  // Success message flash
+  // Post-submission success flash only
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const lastFoundIdRef = useRef<string | null>(null);
   const isFirstRenderRef = useRef<boolean>(true);
@@ -177,7 +165,6 @@ export const WordBar: React.FC<WordBarProps> = ({
             <div ref={contentRef} className="flex flex-nowrap items-center justify-center gap-1">
               {selectedTiles.map((tile, idx) => {
                 const isUnderlined = isInMulDivGroup(idx);
-                const isNegStep = preview.negativeNumIndices.has(idx);
                 const precedingOp = idx > 0 ? ops[idx - 1] : null;
                 const opUnderlined = idx > 0 && isOpInMulDivGroup(idx - 1);
 
@@ -186,9 +173,7 @@ export const WordBar: React.FC<WordBarProps> = ({
                     {precedingOp && (
                       <span
                         className={`px-1.5 py-1 text-lg sm:text-xl font-mono font-black ${
-                          isNegStep
-                            ? 'text-rose-400'
-                            : opUnderlined
+                          opUnderlined
                             ? 'text-sky-300 border-b-2 border-sky-400'
                             : 'text-slate-300'
                         }`}
@@ -202,9 +187,7 @@ export const WordBar: React.FC<WordBarProps> = ({
                       title="Tap to remove"
                       aria-label={`Remove ${tile.tile.display}`}
                       className={`relative min-w-[44px] h-[44px] px-2 rounded-xl font-display font-black text-xl border-2 shadow-md flex items-center justify-center transition-transform hover:scale-105 active:scale-95 cursor-pointer animate-letter-spring focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-amber-300 shrink-0 tabular-nums ${
-                        isNegStep
-                          ? 'bg-rose-500/25 text-rose-200 border-rose-400'
-                          : isUnderlined
+                        isUnderlined
                           ? 'bg-amber-400 text-amber-950 border-sky-400 ring-2 ring-sky-400/50'
                           : 'bg-amber-400 text-amber-950 border-amber-300'
                       }`}
@@ -231,7 +214,7 @@ export const WordBar: React.FC<WordBarProps> = ({
       );
     }
 
-    // Operator Mode: render selected number & operator tiles
+    // Equation Mode: render selected number & operator tiles
     return (
       <div
         ref={containerRef}
@@ -255,7 +238,6 @@ export const WordBar: React.FC<WordBarProps> = ({
               const opIdx = Math.floor((idx - 1) / 2);
               const isUnderlined =
                 !hasSyntaxMismatch && (isNum ? isInMulDivGroup(numIdx) : isOpInMulDivGroup(opIdx));
-              const isNegStep = !hasSyntaxMismatch && isNum && preview.negativeNumIndices.has(numIdx);
 
               return (
                 <button
@@ -265,9 +247,7 @@ export const WordBar: React.FC<WordBarProps> = ({
                   title="Tap to remove"
                   aria-label={`Remove ${tile.tile.display}`}
                   className={`relative min-w-[44px] h-[44px] px-2 rounded-xl font-display font-black text-xl border-2 shadow-md flex items-center justify-center transition-transform hover:scale-105 active:scale-95 cursor-pointer animate-letter-spring focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-amber-300 shrink-0 tabular-nums ${
-                    isNegStep
-                      ? 'bg-rose-500/30 text-rose-200 border-rose-400'
-                      : !isNum
+                    !isNum
                       ? 'bg-slate-800 text-sky-300 border-sky-400/60'
                       : isUnderlined
                       ? 'bg-amber-400 text-amber-950 border-sky-400 ring-2 ring-sky-400/50'
@@ -308,13 +288,6 @@ export const WordBar: React.FC<WordBarProps> = ({
         </div>
       );
     }
-    if (preview.liveError) {
-      return (
-        <span className="text-rose-400 text-xs sm:text-sm font-bold truncate max-w-full leading-tight">
-          {preview.liveError}
-        </span>
-      );
-    }
     if (selectedTiles.length === 0) {
       return (
         <span className="text-slate-400 text-xs sm:text-sm font-medium truncate max-w-full leading-tight">
@@ -326,60 +299,32 @@ export const WordBar: React.FC<WordBarProps> = ({
     }
     if (nums.length < 2) {
       return (
-        <span className="text-amber-300 text-xs sm:text-sm font-semibold truncate max-w-full leading-tight">
+        <span className="text-slate-300 text-xs sm:text-sm font-semibold truncate max-w-full leading-tight">
           {mathMode === 'operator' && selectedTiles.length === 1
             ? 'Pick an operator next'
             : 'Pick 1 more number'}
         </span>
       );
     }
-    if (preview.matchesTarget && preview.potentialScore > 0) {
-      return (
-        <span className="text-emerald-300 text-xs sm:text-sm font-bold truncate max-w-full leading-tight">
-          Matches {target}! +{preview.potentialScore} pts on Enter
-        </span>
-      );
-    }
     return (
       <span className="text-slate-300 text-xs sm:text-sm font-semibold truncate max-w-full leading-tight">
-        Target: Make {target}
+        Press Enter to check for {target}
       </span>
     );
   };
 
-  const renderTargetAndLiveResult = () => {
-    const res = preview.liveResult;
-    const isNeg = res !== null && res < 0;
-    const isMatch = preview.matchesTarget;
-
-    return (
-      <div className="flex items-center gap-2 shrink-0">
-        <div className="px-2.5 py-1 rounded-xl bg-slate-800 border border-slate-700 flex items-center gap-1.5">
-          <span className="text-[11px] font-bold uppercase tracking-wider text-amber-400">
-            Make
-          </span>
-          <span className="font-display font-black text-lg text-white font-mono tabular-nums leading-none">
-            {target}
-          </span>
-        </div>
-
-        <div
-          className={`px-2.5 py-1 rounded-xl border font-mono font-black text-base tabular-nums leading-none flex items-center gap-1 ${
-            res === null
-              ? 'bg-slate-900 border-slate-800 text-slate-500'
-              : isNeg
-              ? 'bg-rose-950/80 border-rose-500/70 text-rose-400'
-              : isMatch
-              ? 'bg-emerald-500/20 border-emerald-400 text-emerald-300'
-              : 'bg-slate-900 border-slate-700 text-slate-200'
-          }`}
-        >
-          <span>=</span>
-          <span>{res === null ? '?' : res}</span>
-        </div>
+  const renderTargetBadge = () => (
+    <div className="flex items-center shrink-0">
+      <div className="px-2.5 py-1 rounded-xl bg-slate-800 border border-slate-700 flex items-center gap-1.5">
+        <span className="text-[11px] font-bold uppercase tracking-wider text-amber-400">
+          Make
+        </span>
+        <span className="font-display font-black text-lg text-white font-mono tabular-nums leading-none">
+          {target}
+        </span>
       </div>
-    );
-  };
+    </div>
+  );
 
   const renderButtons = () => (
     <div className="flex items-center gap-1.5 sm:gap-2 w-full sm:w-auto h-[48px]">
@@ -424,15 +369,10 @@ export const WordBar: React.FC<WordBarProps> = ({
         aria-label="Submit equation"
         className={`relative overflow-hidden flex-1 sm:flex-initial min-w-[104px] min-h-[44px] h-[48px] px-4 rounded-xl flex items-center justify-center gap-1.5 font-display font-black text-base transition-all shrink-0 ${
           canSubmit
-            ? preview.matchesTarget
-              ? 'bg-emerald-500 hover:bg-emerald-400 text-emerald-950 shadow-lg shadow-emerald-950/40 cursor-pointer active:scale-95'
-              : 'bg-amber-400 hover:bg-amber-300 text-slate-950 shadow-md cursor-pointer active:scale-95'
+            ? 'bg-amber-400 hover:bg-amber-300 text-slate-950 shadow-md cursor-pointer active:scale-95'
             : 'bg-slate-900/70 text-slate-500 border border-slate-800 cursor-not-allowed'
         }`}
       >
-        {canSubmit && preview.matchesTarget && (
-          <div className="animate-go-shimmer pointer-events-none" aria-hidden="true" />
-        )}
         <Check className="w-5 h-5 shrink-0 stroke-[3] relative z-10" />
         <span className="relative z-10">{canSubmit ? 'Enter' : 'Pick 2+'}</span>
       </button>
@@ -442,9 +382,9 @@ export const WordBar: React.FC<WordBarProps> = ({
   return (
     <div className="w-full mx-auto px-1 sm:px-2 mb-1 flex flex-col gap-1.5 shrink-0 select-none">
       <div className="bg-slate-900/90 border-2 border-slate-800 rounded-2xl px-2.5 sm:px-3 py-1.5 flex flex-col gap-1.5 shadow-md">
-        {/* Top Row: Target + Live Result + Equation Strip */}
+        {/* Top Row: Target + Equation Strip */}
         <div className="flex items-center justify-between gap-2 min-h-[48px]">
-          {renderTargetAndLiveResult()}
+          {renderTargetBadge()}
 
           <div className="flex-1 min-w-0 h-[48px] flex items-center justify-center overflow-hidden">
             {selectedTiles.length > 0 ? (
@@ -465,12 +405,12 @@ export const WordBar: React.FC<WordBarProps> = ({
           </div>
         </div>
 
-        {/* Status Message */}
+        {/* Status Message (feedback only after submit) */}
         <div aria-live="polite" className="h-[22px] w-full flex items-center justify-center overflow-hidden">
           {renderMessage()}
         </div>
 
-        {/* Controls Row: Read-only Auto Operator Indicator (or Operator Mode badge) + Backspace / Clear / Enter */}
+        {/* Controls Row: Read-only Mode/Operator Indicator + Backspace / Clear / Enter */}
         <div className="flex flex-col sm:flex-row items-center justify-between gap-1.5 pt-1 border-t border-slate-800/80">
           {mathMode === 'simple' ? (
             <div className="flex items-center gap-2 shrink-0">
@@ -483,7 +423,7 @@ export const WordBar: React.FC<WordBarProps> = ({
             </div>
           ) : (
             <span className="text-xs font-semibold text-sky-300 hidden sm:inline">
-              Operator mode (2× score)
+              Equation mode
             </span>
           )}
 

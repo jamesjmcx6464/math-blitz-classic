@@ -59,7 +59,7 @@ export const ClassroomVictoryModal: React.FC<ClassroomVictoryModalProps> = ({
           </div>
 
           <span className="text-xs sm:text-sm font-display font-black uppercase tracking-widest text-amber-400 block">
-            Classroom Champions · Make {config.target} ({config.mathMode === 'operator' ? 'Operator' : 'Simple'})
+            Classroom Champions · Make {config.target} ({config.mathMode === 'operator' ? 'Equation' : 'Simple'})
           </span>
 
           <h1 className="text-3xl sm:text-4xl font-display font-black text-white tracking-tight">

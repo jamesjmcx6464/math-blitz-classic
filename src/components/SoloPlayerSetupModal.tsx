@@ -504,7 +504,7 @@ export const SoloPlayerSetupModal: React.FC<SoloPlayerSetupModalProps> = ({
                       : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
                   }`}
                 >
-                  Operator (2× score)
+                  Equation Mode
                 </button>
               </div>
 
