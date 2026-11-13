@@ -2,6 +2,12 @@ export type MathMode = 'simple' | 'operator';
 
 export type MathOperator = '+' | '−' | '×' | '÷';
 
+export type LeaderboardOperator = MathOperator | 'mixed';
+
+export const MIN_TARGET = 2;
+export const MAX_TARGET = 100;
+export const DEFAULT_TARGET = 10;
+
 export interface MathTileInfo {
   kind: 'number' | 'operator';
   display: string;
@@ -75,6 +81,7 @@ export interface FreePlaySettings {
   wallWidthPct: number;
   ceilingHeight: number;
   mathMode: MathMode;
+  simpleOperator: MathOperator;
   target: number;
   isPractice: boolean;
 }
@@ -113,7 +120,7 @@ export const DIFFICULTY_PRESETS: Record<DifficultyLevel, DifficultyConfig> = {
     maxInFlightOffset: -2,
     allowedOperators: ['+', '−'],
     allowNegativeIntermediates: false,
-    targetRange: { min: 5, max: 20, defaultTarget: 10, presets: [5, 10, 12, 15, 20] },
+    targetRange: { min: MIN_TARGET, max: MAX_TARGET, defaultTarget: DEFAULT_TARGET, presets: [5, 10, 12, 20, 24] },
   },
   easy: {
     id: 'easy',
@@ -130,7 +137,7 @@ export const DIFFICULTY_PRESETS: Record<DifficultyLevel, DifficultyConfig> = {
     maxInFlightOffset: -1,
     allowedOperators: ['+', '−', '×'],
     allowNegativeIntermediates: false,
-    targetRange: { min: 8, max: 30, defaultTarget: 15, presets: [10, 12, 15, 20, 24] },
+    targetRange: { min: MIN_TARGET, max: MAX_TARGET, defaultTarget: DEFAULT_TARGET, presets: [6, 10, 12, 20, 24] },
   },
   normal: {
     id: 'normal',
@@ -147,7 +154,7 @@ export const DIFFICULTY_PRESETS: Record<DifficultyLevel, DifficultyConfig> = {
     maxInFlightOffset: -1,
     allowedOperators: ['+', '−', '×', '÷'],
     allowNegativeIntermediates: false,
-    targetRange: { min: 10, max: 60, defaultTarget: 24, presets: [12, 20, 24, 36, 48] },
+    targetRange: { min: MIN_TARGET, max: MAX_TARGET, defaultTarget: DEFAULT_TARGET, presets: [8, 10, 12, 24, 36] },
   },
   hard: {
     id: 'hard',
@@ -164,7 +171,7 @@ export const DIFFICULTY_PRESETS: Record<DifficultyLevel, DifficultyConfig> = {
     maxInFlightOffset: 0,
     allowedOperators: ['+', '−', '×', '÷'],
     allowNegativeIntermediates: true,
-    targetRange: { min: 20, max: 100, defaultTarget: 36, presets: [24, 36, 48, 60, 84] },
+    targetRange: { min: MIN_TARGET, max: MAX_TARGET, defaultTarget: DEFAULT_TARGET, presets: [10, 18, 24, 48, 60] },
   },
   nightmare: {
     id: 'nightmare',
@@ -181,7 +188,7 @@ export const DIFFICULTY_PRESETS: Record<DifficultyLevel, DifficultyConfig> = {
     maxInFlightOffset: 1,
     allowedOperators: ['+', '−', '×', '÷'],
     allowNegativeIntermediates: true,
-    targetRange: { min: 30, max: 150, defaultTarget: 60, presets: [36, 60, 75, 100, 120] },
+    targetRange: { min: MIN_TARGET, max: MAX_TARGET, defaultTarget: DEFAULT_TARGET, presets: [10, 24, 48, 60, 100] },
   },
 };
 
@@ -195,7 +202,8 @@ export const DEFAULT_FREE_PLAY_SETTINGS: FreePlaySettings = {
   wallWidthPct: 100,
   ceilingHeight: 60,
   mathMode: 'simple',
-  target: 24,
+  simpleOperator: '+',
+  target: DEFAULT_TARGET,
   isPractice: false,
 };
 
@@ -223,6 +231,7 @@ export interface ClassroomConfig {
   totalRounds: number; // 1, 2, 3, 5 rounds
   cleanBoardEachTurn: boolean;
   mathMode: MathMode;
+  simpleOperator: MathOperator;
   target: number;
   spawnSeed: number;
 }

@@ -19,8 +19,12 @@ import {
   DifficultyLevel,
   DIFFICULTY_PRESETS,
   MathMode,
+  MathOperator,
 } from '../types/game';
 import { HowToPlayModal } from './HowToPlayModal';
+import { TargetPicker } from './TargetPicker';
+import { SimpleOperatorPicker } from './SimpleOperatorPicker';
+import { isCompositeTarget } from '../utils/mathEngine';
 
 interface StartMenuProps {
   onQuickPlay: () => void;
@@ -34,6 +38,10 @@ interface StartMenuProps {
   onChangeDifficulty: (level: DifficultyLevel) => void;
   mathMode: MathMode;
   onChangeMathMode: (mode: MathMode) => void;
+  simpleOperator: MathOperator;
+  onChangeSimpleOperator: (op: MathOperator) => void;
+  target: number;
+  onChangeTarget: (nextTarget: number) => void;
 }
 
 const DIFFICULTY_ORDER: DifficultyLevel[] = ['beginner', 'easy', 'normal', 'hard', 'nightmare'];
@@ -76,10 +84,16 @@ export const StartMenu: React.FC<StartMenuProps> = ({
   onChangeDifficulty,
   mathMode,
   onChangeMathMode,
+  simpleOperator,
+  onChangeSimpleOperator,
+  target,
+  onChangeTarget,
 }) => {
   const isWide = screenMode === 'pc';
   const [showHowToPlay, setShowHowToPlay] = useState<boolean>(false);
   const activePreset = DIFFICULTY_PRESETS[difficulty];
+  const requiresComposite = mathMode === 'simple' && simpleOperator === '×';
+  const quickPlayBlockedByPrime = requiresComposite && !isCompositeTarget(target);
 
   return (
     <div
@@ -142,13 +156,13 @@ export const StartMenu: React.FC<StartMenuProps> = ({
       </header>
 
       {/* Main Section */}
-      <main className="flex-1 flex flex-col items-center justify-center py-3 sm:py-4 space-y-3">
+      <main className="flex-1 flex flex-col items-center justify-center py-3 sm:py-4 space-y-2.5">
         {/* 1. Leaderboard Button */}
         <div className="w-full">
           <button
             type="button"
             onClick={onOpenHighScores}
-            className="w-full min-h-[52px] sm:min-h-[56px] px-4 py-2 rounded-2xl bg-slate-900/90 hover:bg-slate-800/90 border-2 border-amber-400/40 hover:border-amber-400 text-amber-200 flex items-center justify-between shadow-lg shadow-amber-500/10 transition-all cursor-pointer active:scale-[0.99] group"
+            className="w-full min-h-[50px] px-4 py-2 rounded-2xl bg-slate-900/90 hover:bg-slate-800/90 border-2 border-amber-400/40 hover:border-amber-400 text-amber-200 flex items-center justify-between shadow-lg shadow-amber-500/10 transition-all cursor-pointer active:scale-[0.99] group"
           >
             <div className="flex items-center gap-3">
               <div className="w-9 h-9 rounded-xl bg-amber-400/20 border border-amber-400/40 flex items-center justify-center text-amber-300 group-hover:scale-105 transition-transform">
@@ -159,7 +173,7 @@ export const StartMenu: React.FC<StartMenuProps> = ({
                   Leaderboard
                 </span>
                 <span className="text-xs text-amber-400/80 font-semibold block leading-none">
-                  Classroom Scores &amp; High Records
+                  Comparable by Target &amp; Operator
                 </span>
               </div>
             </div>
@@ -174,20 +188,25 @@ export const StartMenu: React.FC<StartMenuProps> = ({
         <div className="w-full">
           <button
             type="button"
+            disabled={quickPlayBlockedByPrime}
             onClick={onQuickPlay}
-            className="w-full min-h-[88px] sm:min-h-[96px] p-4 sm:p-5 rounded-3xl bg-gradient-to-r from-amber-400 via-amber-500 to-yellow-500 hover:from-amber-300 hover:to-amber-400 border-3 border-amber-300 text-slate-950 flex items-center justify-between shadow-2xl shadow-amber-500/25 transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-amber-400 active:scale-[0.98] group"
+            className={`w-full min-h-[82px] sm:min-h-[88px] p-4 rounded-3xl border-3 flex items-center justify-between shadow-2xl transition-all group ${
+              quickPlayBlockedByPrime
+                ? 'bg-slate-800 border-slate-700 text-slate-400 cursor-not-allowed opacity-70'
+                : 'bg-gradient-to-r from-amber-400 via-amber-500 to-yellow-500 hover:from-amber-300 hover:to-amber-400 border-amber-300 text-slate-950 shadow-amber-500/25 cursor-pointer focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-amber-400 active:scale-[0.98]'
+            }`}
           >
-            <div className="flex items-center gap-3.5 sm:gap-4 text-left">
-              <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-2xl bg-slate-950/20 flex items-center justify-center text-slate-950 shrink-0">
-                <Zap className="w-7 h-7 sm:w-8 sm:h-8 fill-current" />
+            <div className="flex items-center gap-3.5 text-left">
+              <div className="w-12 h-12 rounded-2xl bg-slate-950/20 flex items-center justify-center shrink-0">
+                <Zap className="w-7 h-7 fill-current" />
               </div>
               <div>
-                <span className="font-display font-black text-3xl sm:text-4xl text-slate-950 tracking-tight block leading-tight">
+                <span className="font-display font-black text-2xl sm:text-3xl tracking-tight block leading-tight">
                   Quick Play
                 </span>
-                <span className="text-xs sm:text-sm font-extrabold text-slate-900/85 block mt-0.5">
-                  1:00 · Make 10 · {activePreset.label} ·{' '}
-                  {mathMode === 'operator' ? 'Operator (2×)' : 'Simple'}
+                <span className="text-xs sm:text-sm font-extrabold opacity-85 block mt-0.5">
+                  1:00 · Make {target} · {activePreset.label} ·{' '}
+                  {mathMode === 'operator' ? 'Operator (2×)' : `Simple (${simpleOperator})`}
                 </span>
               </div>
             </div>
@@ -198,25 +217,25 @@ export const StartMenu: React.FC<StartMenuProps> = ({
         </div>
 
         {/* 3. Solo Play & Team Play Buttons */}
-        <div className="w-full grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-3">
+        <div className="w-full grid grid-cols-1 sm:grid-cols-2 gap-2.5">
           {/* Solo Play */}
           <button
             type="button"
             onClick={onOpenSoloSetup}
-            className="w-full min-h-[70px] p-3 sm:p-3.5 rounded-2xl bg-slate-900/90 hover:bg-slate-800 border-2 border-indigo-500/40 hover:border-indigo-400 text-white flex items-center gap-3 shadow-md shadow-indigo-500/10 transition-all cursor-pointer active:scale-[0.98] text-left group"
+            className="w-full min-h-[66px] p-3 rounded-2xl bg-slate-900/90 hover:bg-slate-800 border-2 border-indigo-500/40 hover:border-indigo-400 text-white flex items-center gap-3 shadow-md shadow-indigo-500/10 transition-all cursor-pointer active:scale-[0.98] text-left group"
           >
-            <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-xl bg-indigo-500/20 border border-indigo-400/50 flex items-center justify-center text-indigo-400 shrink-0 group-hover:scale-105 transition-transform">
-              <User className="w-5 h-5 sm:w-6 sm:h-6" />
+            <div className="w-10 h-10 rounded-xl bg-indigo-500/20 border border-indigo-400/50 flex items-center justify-center text-indigo-400 shrink-0 group-hover:scale-105 transition-transform">
+              <User className="w-5 h-5" />
             </div>
             <div className="min-w-0 flex-1">
               <div className="flex items-center justify-between">
-                <span className="font-display font-black text-base sm:text-lg text-white block leading-tight">
+                <span className="font-display font-black text-base text-white block leading-tight">
                   Solo Play
                 </span>
                 <ArrowRight className="w-4 h-4 text-indigo-400 group-hover:translate-x-1 transition-transform" />
               </div>
               <span className="text-xs text-indigo-300 font-semibold block mt-0.5 truncate">
-                Target, Timer &amp; Practice
+                Target, Operator &amp; Practice
               </span>
             </div>
           </button>
@@ -225,14 +244,14 @@ export const StartMenu: React.FC<StartMenuProps> = ({
           <button
             type="button"
             onClick={onOpenTeamSetup}
-            className="w-full min-h-[70px] p-3 sm:p-3.5 rounded-2xl bg-slate-900/90 hover:bg-slate-800 border-2 border-emerald-500/40 hover:border-emerald-400 text-white flex items-center gap-3 shadow-md shadow-emerald-500/10 transition-all cursor-pointer active:scale-[0.98] text-left group"
+            className="w-full min-h-[66px] p-3 rounded-2xl bg-slate-900/90 hover:bg-slate-800 border-2 border-emerald-500/40 hover:border-emerald-400 text-white flex items-center gap-3 shadow-md shadow-emerald-500/10 transition-all cursor-pointer active:scale-[0.98] text-left group"
           >
-            <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-xl bg-emerald-500/20 border border-emerald-400/50 flex items-center justify-center text-emerald-400 shrink-0 group-hover:scale-105 transition-transform">
-              <Users className="w-5 h-5 sm:w-6 sm:h-6" />
+            <div className="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-400/50 flex items-center justify-center text-emerald-400 shrink-0 group-hover:scale-105 transition-transform">
+              <Users className="w-5 h-5" />
             </div>
             <div className="min-w-0 flex-1">
               <div className="flex items-center justify-between">
-                <span className="font-display font-black text-base sm:text-lg text-white block leading-tight">
+                <span className="font-display font-black text-base text-white block leading-tight">
                   Team Play
                 </span>
                 <ArrowRight className="w-4 h-4 text-emerald-400 group-hover:translate-x-1 transition-transform" />
@@ -244,8 +263,8 @@ export const StartMenu: React.FC<StartMenuProps> = ({
           </button>
         </div>
 
-        {/* 4. Math Mode Toggle (Simple vs Operator) */}
-        <div className="w-full bg-slate-900/90 border border-slate-800 rounded-2xl p-3 sm:p-3.5 shadow-sm space-y-2">
+        {/* 4. Math Mode & Pre-Game Operator */}
+        <div className="w-full bg-slate-900/90 border border-slate-800 rounded-2xl p-3 shadow-sm space-y-2.5">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-1.5">
               <Calculator className="w-4 h-4 text-sky-400" />
@@ -254,7 +273,9 @@ export const StartMenu: React.FC<StartMenuProps> = ({
               </span>
             </div>
             <span className="text-xs font-semibold text-slate-400">
-              {mathMode === 'operator' ? 'Operators fall as tiles (2× pts)' : 'Numbers fall · pick op in bar'}
+              {mathMode === 'operator'
+                ? 'Operators fall as tiles (2× pts)'
+                : `Auto-inserts "${simpleOperator}" all round`}
             </span>
           </div>
 
@@ -282,10 +303,30 @@ export const StartMenu: React.FC<StartMenuProps> = ({
               Operator Mode (2×)
             </button>
           </div>
+
+          {mathMode === 'simple' && (
+            <SimpleOperatorPicker
+              difficulty={difficulty}
+              value={simpleOperator}
+              onChange={onChangeSimpleOperator}
+              compact
+            />
+          )}
         </div>
 
-        {/* 5. Difficulty Menu (Beginner, Easy, Normal, Hard, Nightmare) */}
-        <div className="w-full bg-slate-900/90 border border-slate-800 rounded-2xl p-3 sm:p-3.5 shadow-sm space-y-2">
+        {/* 5. Target Number Picker (2–100, default 10) */}
+        <div className="w-full bg-slate-900/90 border border-slate-800 rounded-2xl p-3 shadow-sm">
+          <TargetPicker
+            difficulty={difficulty}
+            target={target}
+            onChangeTarget={onChangeTarget}
+            requiresComposite={requiresComposite}
+            compact
+          />
+        </div>
+
+        {/* 6. Difficulty Menu (Beginner, Easy, Normal, Hard, Nightmare) */}
+        <div className="w-full bg-slate-900/90 border border-slate-800 rounded-2xl p-3 shadow-sm space-y-2">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-1.5">
               {difficulty === 'nightmare' ? (
@@ -321,33 +362,6 @@ export const StartMenu: React.FC<StartMenuProps> = ({
                 </button>
               );
             })}
-          </div>
-        </div>
-
-        {/* 6. 3-steps strip */}
-        <div className="w-full bg-slate-900/80 border border-slate-800/90 rounded-2xl p-3 sm:p-3.5 shadow-sm">
-          <span className="text-[11px] font-display font-black text-amber-400 uppercase tracking-widest block mb-2 text-center sm:text-left">
-            Quick Guide
-          </span>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 sm:gap-3 text-xs sm:text-sm font-medium text-slate-300">
-            <div className="flex items-center gap-2.5">
-              <span className="w-7 h-7 rounded-xl bg-amber-400 text-slate-950 font-black flex items-center justify-center shrink-0">
-                1
-              </span>
-              <span>Build an equation for the target</span>
-            </div>
-            <div className="flex items-center gap-2.5">
-              <span className="w-7 h-7 rounded-xl bg-emerald-500 text-slate-950 font-black flex items-center justify-center shrink-0">
-                2
-              </span>
-              <span>Press Enter to clear &amp; score</span>
-            </div>
-            <div className="flex items-center gap-2.5">
-              <span className="w-7 h-7 rounded-xl bg-rose-400 text-slate-950 font-black flex items-center justify-center shrink-0">
-                3
-              </span>
-              <span>Keep pile below ceiling!</span>
-            </div>
           </div>
         </div>
       </main>

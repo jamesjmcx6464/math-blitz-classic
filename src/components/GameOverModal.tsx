@@ -1,7 +1,8 @@
 import React, { useEffect } from 'react';
 import { Play, Trophy, Home, Sparkles } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import { MathMode } from '../types/game';
+import { LeaderboardOperator, MathMode } from '../types/game';
+import { formatOperatorLabel } from '../utils/highScores';
 
 interface GameOverModalProps {
   finalScore: number;
@@ -12,6 +13,7 @@ interface GameOverModalProps {
   isPractice?: boolean;
   target: number;
   mathMode: MathMode;
+  operator?: LeaderboardOperator;
   onNewGame: () => void;
   onBackToMenu: () => void;
   reason?: string;
@@ -26,6 +28,7 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
   isPractice = false,
   target,
   mathMode,
+  operator,
   onNewGame,
   onBackToMenu,
   reason = 'The tiles reached the top!',
@@ -72,10 +75,16 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
         </p>
 
         <div className="w-full bg-amber-50 border-4 border-amber-200 rounded-3xl p-5 mb-5 space-y-3">
-          <div className="flex items-center justify-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-600">
+          <div className="flex flex-wrap items-center justify-center gap-1.5 text-xs font-bold uppercase tracking-wider text-slate-600">
             <span>Make {target}</span>
             <span>·</span>
             <span>{mathMode === 'operator' ? 'Operator Mode' : 'Simple Mode'}</span>
+            {operator && (
+              <>
+                <span>·</span>
+                <span>{formatOperatorLabel(operator)}</span>
+              </>
+            )}
           </div>
 
           <div>

@@ -2,15 +2,16 @@ import React, { useState, useEffect, useMemo } from 'react';
 import {
   getHighScores,
   clearHighScores,
+  formatOperatorLabel,
   formatTimeBucketLabel,
   sortTimeBuckets,
   HighScoreEntry,
 } from '../utils/highScores';
-import { formatTargetBandLabel } from '../utils/mathEngine';
 import {
   DifficultyLevel,
   DIFFICULTY_PRESETS,
   LeaderboardMode,
+  LeaderboardOperator,
   MathMode,
   TargetBand,
 } from '../types/game';
@@ -34,6 +35,7 @@ export interface LastSoloResult {
   entryId?: string;
   mode?: LeaderboardMode;
   mathMode?: MathMode;
+  operator?: LeaderboardOperator;
   timeBucket?: string;
   difficulty?: DifficultyLevel;
   target?: number;
@@ -79,8 +81,8 @@ const MODE_META: Record<
 
 const MODE_ORDER: LeaderboardMode[] = ['quick', 'solo', 'team'];
 const MATH_MODE_ORDER: MathMode[] = ['simple', 'operator'];
+const OPERATOR_ORDER: LeaderboardOperator[] = ['+', '−', '×', '÷', 'mixed'];
 const DIFFICULTY_ORDER: DifficultyLevel[] = ['beginner', 'easy', 'normal', 'hard', 'nightmare'];
-const TARGET_BAND_ORDER: TargetBand[] = ['10', '5-10', '11-20', '21-40', '41-80', '81+'];
 
 export const HighScoresModal: React.FC<HighScoresModalProps> = ({
   onBack,
@@ -114,10 +116,45 @@ export const HighScoresModal: React.FC<HighScoresModalProps> = ({
     return availableMathModes[0] || 'simple';
   });
 
-  const availableTimeBuckets = useMemo(() => {
+  const availableOperators = useMemo(() => {
     const sub = scores.filter((s) => s.mode === activeMode && s.mathMode === activeMathMode);
-    return sortTimeBuckets(Array.from(new Set<string>(sub.map((s) => s.timeBucket))));
+    return OPERATOR_ORDER.filter((op) => sub.some((s) => s.operator === op));
   }, [scores, activeMode, activeMathMode]);
+
+  const [activeOperator, setActiveOperator] = useState<LeaderboardOperator>(() => {
+    if (lastResult?.operator && availableOperators.includes(lastResult.operator)) {
+      return lastResult.operator;
+    }
+    return availableOperators[0] || '+';
+  });
+
+  const availableTargets = useMemo(() => {
+    const sub = scores.filter(
+      (s) =>
+        s.mode === activeMode &&
+        s.mathMode === activeMathMode &&
+        s.operator === activeOperator
+    );
+    return Array.from(new Set<number>(sub.map((s) => s.target))).sort((a, b) => a - b);
+  }, [scores, activeMode, activeMathMode, activeOperator]);
+
+  const [activeTarget, setActiveTarget] = useState<number>(() => {
+    if (lastResult?.target && availableTargets.includes(lastResult.target)) {
+      return lastResult.target;
+    }
+    return availableTargets[0] ?? 10;
+  });
+
+  const availableTimeBuckets = useMemo(() => {
+    const sub = scores.filter(
+      (s) =>
+        s.mode === activeMode &&
+        s.mathMode === activeMathMode &&
+        s.operator === activeOperator &&
+        s.target === activeTarget
+    );
+    return sortTimeBuckets(Array.from(new Set<string>(sub.map((s) => s.timeBucket))));
+  }, [scores, activeMode, activeMathMode, activeOperator, activeTarget]);
 
   const [activeTimeBucket, setActiveTimeBucket] = useState<string>(() => {
     if (lastResult?.timeBucket && availableTimeBuckets.includes(lastResult.timeBucket)) {
@@ -131,10 +168,12 @@ export const HighScoresModal: React.FC<HighScoresModalProps> = ({
       (s) =>
         s.mode === activeMode &&
         s.mathMode === activeMathMode &&
+        s.operator === activeOperator &&
+        s.target === activeTarget &&
         (!activeTimeBucket || s.timeBucket === activeTimeBucket)
     );
     return DIFFICULTY_ORDER.filter((d) => sub.some((s) => s.difficulty === d));
-  }, [scores, activeMode, activeMathMode, activeTimeBucket]);
+  }, [scores, activeMode, activeMathMode, activeOperator, activeTarget, activeTimeBucket]);
 
   const [activeDifficulty, setActiveDifficulty] = useState<DifficultyLevel>(() => {
     if (lastResult?.difficulty && availableDifficulties.includes(lastResult.difficulty)) {
@@ -143,25 +182,7 @@ export const HighScoresModal: React.FC<HighScoresModalProps> = ({
     return availableDifficulties[0] || 'normal';
   });
 
-  const availableTargetBands = useMemo(() => {
-    const sub = scores.filter(
-      (s) =>
-        s.mode === activeMode &&
-        s.mathMode === activeMathMode &&
-        (!activeTimeBucket || s.timeBucket === activeTimeBucket) &&
-        s.difficulty === activeDifficulty
-    );
-    return TARGET_BAND_ORDER.filter((b) => sub.some((s) => s.targetBand === b));
-  }, [scores, activeMode, activeMathMode, activeTimeBucket, activeDifficulty]);
-
-  const [activeTargetBand, setActiveTargetBand] = useState<TargetBand>(() => {
-    if (lastResult?.targetBand && availableTargetBands.includes(lastResult.targetBand)) {
-      return lastResult.targetBand;
-    }
-    return availableTargetBands[0] || '10';
-  });
-
-  // Sync defaults when lastResult updates
+  // Sync cascading selections when lastResult updates
   useEffect(() => {
     const fresh = getHighScores();
     setScores(fresh);
@@ -182,11 +203,41 @@ export const HighScoresModal: React.FC<HighScoresModalProps> = ({
         : presentMath[0] || 'simple';
     setActiveMathMode(nextMath);
 
+    const presentOps = OPERATOR_ORDER.filter((op) =>
+      fresh.some((s) => s.mode === nextMode && s.mathMode === nextMath && s.operator === op)
+    );
+    const nextOp =
+      lastResult?.operator && presentOps.includes(lastResult.operator)
+        ? lastResult.operator
+        : presentOps[0] || (nextMath === 'operator' ? 'mixed' : '+');
+    setActiveOperator(nextOp);
+
+    const presentTargets = Array.from(
+      new Set<number>(
+        fresh
+          .filter(
+            (s) => s.mode === nextMode && s.mathMode === nextMath && s.operator === nextOp
+          )
+          .map((s) => s.target)
+      )
+    ).sort((a, b) => a - b);
+    const nextTarget =
+      lastResult?.target && presentTargets.includes(lastResult.target)
+        ? lastResult.target
+        : presentTargets[0] ?? 10;
+    setActiveTarget(nextTarget);
+
     const buckets = sortTimeBuckets(
       Array.from(
         new Set<string>(
           fresh
-            .filter((s) => s.mode === nextMode && s.mathMode === nextMath)
+            .filter(
+              (s) =>
+                s.mode === nextMode &&
+                s.mathMode === nextMath &&
+                s.operator === nextOp &&
+                s.target === nextTarget
+            )
             .map((s) => s.timeBucket)
         )
       )
@@ -202,6 +253,8 @@ export const HighScoresModal: React.FC<HighScoresModalProps> = ({
         (s) =>
           s.mode === nextMode &&
           s.mathMode === nextMath &&
+          s.operator === nextOp &&
+          s.target === nextTarget &&
           (!nextBucket || s.timeBucket === nextBucket) &&
           s.difficulty === d
       )
@@ -211,22 +264,6 @@ export const HighScoresModal: React.FC<HighScoresModalProps> = ({
         ? lastResult.difficulty
         : diffs[0] || 'normal';
     setActiveDifficulty(nextDiff);
-
-    const bands = TARGET_BAND_ORDER.filter((b) =>
-      fresh.some(
-        (s) =>
-          s.mode === nextMode &&
-          s.mathMode === nextMath &&
-          (!nextBucket || s.timeBucket === nextBucket) &&
-          s.difficulty === nextDiff &&
-          s.targetBand === b
-      )
-    );
-    const nextBand =
-      lastResult?.targetBand && bands.includes(lastResult.targetBand)
-        ? lastResult.targetBand
-        : bands[0] || '10';
-    setActiveTargetBand(nextBand);
 
     if (
       lastResult &&
@@ -241,7 +278,6 @@ export const HighScoresModal: React.FC<HighScoresModalProps> = ({
     }
   }, [lastResult]);
 
-  // Keep selections valid when cascading filters change
   useEffect(() => {
     if (availableModes.length > 0 && !availableModes.includes(activeMode)) {
       setActiveMode(availableModes[0]);
@@ -253,6 +289,18 @@ export const HighScoresModal: React.FC<HighScoresModalProps> = ({
       setActiveMathMode(availableMathModes[0]);
     }
   }, [availableMathModes, activeMathMode]);
+
+  useEffect(() => {
+    if (availableOperators.length > 0 && !availableOperators.includes(activeOperator)) {
+      setActiveOperator(availableOperators[0]);
+    }
+  }, [availableOperators, activeOperator]);
+
+  useEffect(() => {
+    if (availableTargets.length > 0 && !availableTargets.includes(activeTarget)) {
+      setActiveTarget(availableTargets[0]);
+    }
+  }, [availableTargets, activeTarget]);
 
   useEffect(() => {
     if (availableTimeBuckets.length === 0) {
@@ -268,12 +316,6 @@ export const HighScoresModal: React.FC<HighScoresModalProps> = ({
     }
   }, [availableDifficulties, activeDifficulty]);
 
-  useEffect(() => {
-    if (availableTargetBands.length > 0 && !availableTargetBands.includes(activeTargetBand)) {
-      setActiveTargetBand(availableTargetBands[0]);
-    }
-  }, [availableTargetBands, activeTargetBand]);
-
   const filteredScores = useMemo(() => {
     if (!activeTimeBucket) return [];
     return scores
@@ -281,12 +323,21 @@ export const HighScoresModal: React.FC<HighScoresModalProps> = ({
         (s) =>
           s.mode === activeMode &&
           s.mathMode === activeMathMode &&
+          s.operator === activeOperator &&
+          s.target === activeTarget &&
           s.timeBucket === activeTimeBucket &&
-          s.difficulty === activeDifficulty &&
-          s.targetBand === activeTargetBand
+          s.difficulty === activeDifficulty
       )
       .sort((a, b) => b.score - a.score || b.timestamp - a.timestamp);
-  }, [scores, activeMode, activeMathMode, activeTimeBucket, activeDifficulty, activeTargetBand]);
+  }, [
+    scores,
+    activeMode,
+    activeMathMode,
+    activeOperator,
+    activeTarget,
+    activeTimeBucket,
+    activeDifficulty,
+  ]);
 
   const handleClear = () => {
     clearHighScores();
@@ -308,7 +359,7 @@ export const HighScoresModal: React.FC<HighScoresModalProps> = ({
                 Leaderboard
               </h2>
               <span className="text-xs font-semibold text-amber-400/90 block">
-                Bucketed by Mode, Math Mode, Time, Difficulty &amp; Target
+                Compared by Target, Operator, Time &amp; Difficulty
               </span>
             </div>
           </div>
@@ -358,7 +409,7 @@ export const HighScoresModal: React.FC<HighScoresModalProps> = ({
               })}
             </div>
 
-            {/* 2. Math Mode + Time + Difficulty + Target Band Sub-Filters */}
+            {/* 2. Math Mode + Operator + Exact Target + Time + Difficulty Filters */}
             <div className="flex flex-wrap items-center gap-1.5">
               {availableMathModes.map((mm) => {
                 const isSelected = activeMathMode === mm;
@@ -377,6 +428,43 @@ export const HighScoresModal: React.FC<HighScoresModalProps> = ({
                   >
                     <Calculator className="w-3.5 h-3.5" />
                     <span>{mm === 'operator' ? 'Operator' : 'Simple'}</span>
+                  </button>
+                );
+              })}
+
+              {availableOperators.map((op) => {
+                const isSelected = activeOperator === op;
+                return (
+                  <button
+                    key={op}
+                    type="button"
+                    onClick={() => setActiveOperator(op)}
+                    className={`min-h-[44px] px-3 py-1.5 rounded-xl border text-xs font-black transition-all cursor-pointer ${
+                      isSelected
+                        ? 'bg-indigo-500 text-white border-indigo-300'
+                        : 'bg-slate-800/60 border-slate-700/80 text-slate-300 hover:bg-slate-800'
+                    }`}
+                  >
+                    {formatOperatorLabel(op)}
+                  </button>
+                );
+              })}
+
+              {availableTargets.map((tgt) => {
+                const isSelected = activeTarget === tgt;
+                return (
+                  <button
+                    key={tgt}
+                    type="button"
+                    onClick={() => setActiveTarget(tgt)}
+                    className={`min-h-[44px] px-3 py-1.5 rounded-xl border text-xs font-bold flex items-center gap-1 transition-all cursor-pointer font-mono ${
+                      isSelected
+                        ? 'bg-emerald-400 text-slate-950 border-emerald-200 font-black'
+                        : 'bg-slate-800/60 border-slate-700/80 text-slate-300 hover:bg-slate-800'
+                    }`}
+                  >
+                    <Target className="w-3.5 h-3.5" />
+                    <span>Make {tgt}</span>
                   </button>
                 );
               })}
@@ -417,25 +505,6 @@ export const HighScoresModal: React.FC<HighScoresModalProps> = ({
                   </button>
                 );
               })}
-
-              {availableTargetBands.map((band) => {
-                const isSelected = activeTargetBand === band;
-                return (
-                  <button
-                    key={band}
-                    type="button"
-                    onClick={() => setActiveTargetBand(band)}
-                    className={`min-h-[44px] px-3 py-1.5 rounded-xl border text-xs font-bold flex items-center gap-1 transition-all cursor-pointer ${
-                      isSelected
-                        ? 'bg-emerald-400 text-slate-950 border-emerald-200'
-                        : 'bg-slate-800/60 border-slate-700/80 text-slate-300 hover:bg-slate-800'
-                    }`}
-                  >
-                    <Target className="w-3.5 h-3.5" />
-                    <span>{formatTargetBandLabel(band)}</span>
-                  </button>
-                );
-              })}
             </div>
           </div>
         )}
@@ -467,6 +536,7 @@ export const HighScoresModal: React.FC<HighScoresModalProps> = ({
                 <span className="text-xs text-slate-300 font-medium block truncate">
                   {lastResult.totalEquations} equations · Best: {lastResult.longestEquation || '-'}
                   {lastResult.target ? ` · Make ${lastResult.target}` : ''}
+                  {lastResult.operator ? ` · ${formatOperatorLabel(lastResult.operator)}` : ''}
                 </span>
               </div>
             </div>
@@ -566,7 +636,7 @@ export const HighScoresModal: React.FC<HighScoresModalProps> = ({
                         )}
                       </div>
                       <div className="text-[11px] text-slate-400 font-medium truncate">
-                        Make {entry.target} · Best:{' '}
+                        Make {entry.target} · {formatOperatorLabel(entry.operator)} · Best:{' '}
                         <span className="font-mono font-bold text-slate-300">
                           {entry.longestEquation}
                         </span>{' '}

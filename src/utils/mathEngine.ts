@@ -1,9 +1,12 @@
 import {
+  DEFAULT_TARGET,
   DifficultyLevel,
   DIFFICULTY_PRESETS,
+  MAX_TARGET,
   MathMode,
   MathOperator,
   MathTileInfo,
+  MIN_TARGET,
   TargetBand,
 } from '../types/game';
 
@@ -44,18 +47,68 @@ export function allowsNegativeIntermediates(difficulty: DifficultyLevel): boolea
   return DIFFICULTY_PRESETS[difficulty].allowNegativeIntermediates;
 }
 
-export function getTargetRange(difficulty: DifficultyLevel) {
-  return DIFFICULTY_PRESETS[difficulty].targetRange;
+export function isPrimeNumber(n: number): boolean {
+  if (n < 2) return false;
+  if (n === 2) return true;
+  if (n % 2 === 0) return false;
+  for (let i = 3; i * i <= n; i += 2) {
+    if (n % i === 0) return false;
+  }
+  return true;
 }
 
-export function clampTarget(difficulty: DifficultyLevel, target: number): number {
-  const { min, max } = getTargetRange(difficulty);
-  return Math.max(min, Math.min(max, Math.round(target)));
+export function isCompositeTarget(n: number): boolean {
+  return Number.isInteger(n) && n >= 4 && !isPrimeNumber(n);
 }
 
-export function pickRandomTarget(difficulty: DifficultyLevel, rng: () => number = Math.random): number {
-  const { min, max } = getTargetRange(difficulty);
-  return min + Math.floor(rng() * (max - min + 1));
+export function nearestCompositeTarget(target: number): number {
+  const base = Math.max(4, Math.min(MAX_TARGET, Math.round(target)));
+  if (isCompositeTarget(base)) return base;
+  for (let offset = 1; offset <= MAX_TARGET; offset++) {
+    if (base + offset <= MAX_TARGET && isCompositeTarget(base + offset)) {
+      return base + offset;
+    }
+    if (base - offset >= 4 && isCompositeTarget(base - offset)) {
+      return base - offset;
+    }
+  }
+  return 10;
+}
+
+export function getTargetRange(_difficulty?: DifficultyLevel) {
+  return { min: MIN_TARGET, max: MAX_TARGET, defaultTarget: DEFAULT_TARGET };
+}
+
+export function clampTarget(target: number, requireComposite = false): number {
+  const clamped = Math.max(MIN_TARGET, Math.min(MAX_TARGET, Math.round(target)));
+  if (requireComposite && !isCompositeTarget(clamped)) {
+    return nearestCompositeTarget(clamped);
+  }
+  return clamped;
+}
+
+export function stepTarget(current: number, delta: -1 | 1, requireComposite = false): number {
+  let next = Math.max(MIN_TARGET, Math.min(MAX_TARGET, Math.round(current) + delta));
+  if (!requireComposite) return next;
+  while (next >= 4 && next <= MAX_TARGET && !isCompositeTarget(next)) {
+    next += delta;
+  }
+  if (next < 4) return 4;
+  if (next > MAX_TARGET) return 100;
+  return isCompositeTarget(next) ? next : nearestCompositeTarget(next);
+}
+
+export function pickRandomTarget(
+  requireComposite = false,
+  rng: () => number = Math.random
+): number {
+  const pool: number[] = [];
+  for (let n = MIN_TARGET; n <= MAX_TARGET; n++) {
+    if (!requireComposite || isCompositeTarget(n)) {
+      pool.push(n);
+    }
+  }
+  return pool[Math.floor(rng() * pool.length)] ?? DEFAULT_TARGET;
 }
 
 export function getTargetBand(target: number, isQuickPlay: boolean): TargetBand {
@@ -168,7 +221,7 @@ export function evaluateEquation(
     return emptyFailure('Alternate numbers & operators');
   }
   for (const n of nums) {
-    if (!Number.isInteger(n) || n < 1 || n > 10) {
+    if (!Number.isInteger(n) || n < 1 || n > 2000) {
       return emptyFailure('Invalid number tile');
     }
   }
@@ -258,7 +311,6 @@ export function evaluateEquation(
   }
 
   // Rule B: Cancel pairs matched left to right without overlap
-  // Adjacent steps: (ops[i], nums[i+1]) and (ops[i+1], nums[i+2]); i=-1 models implicit '+' before nums[0]
   let i = -1;
   while (i + 1 < ops.length) {
     const opA: MathOperator = i === -1 ? '+' : ops[i];
@@ -487,11 +539,13 @@ export function formatEquationString(nums: number[], ops: MathOperator[]): strin
 }
 
 // ============================================================================
-// SPAWN WEIGHTS
+// TARGET-DRIVEN NUMBER POOLS & SPAWN WEIGHTS
 // ============================================================================
 
-const BASE_WEIGHTS_BEGINNER = [6, 14, 14, 13, 13, 10, 8, 8, 7, 7]; // 1..10
-const BASE_WEIGHTS_STANDARD = [4, 12, 12, 11, 11, 10, 10, 10, 10, 10]; // 1..10
+export interface WeightedNumberCandidate {
+  value: number;
+  weight: number; // normalized probabilities summing to 1
+}
 
 const OPERATOR_WEIGHTS_BY_DIFFICULTY: Record<DifficultyLevel, Record<MathOperator, number>> = {
   beginner: { '+': 55, '−': 45, '×': 0, '÷': 0 },
@@ -501,36 +555,129 @@ const OPERATOR_WEIGHTS_BY_DIFFICULTY: Record<DifficultyLevel, Record<MathOperato
   nightmare: { '+': 20, '−': 20, '×': 30, '÷': 30 },
 };
 
-/**
- * Returns normalized probabilities (summing to 1) for numbers 1..10 (index 0..9).
- */
-export function getNumberSpawnWeights(
-  difficulty: DifficultyLevel,
-  target: number
-): number[] {
-  const base =
-    difficulty === 'beginner' ? BASE_WEIGHTS_BEGINNER : BASE_WEIGHTS_STANDARD;
-  const allowedOps = getAllowedOperators(difficulty);
-  const mulDivAllowed = allowedOps.includes('×') || allowedOps.includes('÷');
-
-  const raw = base.map((w, idx) => {
-    const n = idx + 1;
-    let weight = w;
-    if (mulDivAllowed && target > 0 && target % n === 0) {
-      weight *= 1.5;
-    }
-    if (n > target) {
-      weight *= 0.5;
-    }
-    return weight;
-  });
-
-  const sum = raw.reduce((acc, v) => acc + v, 0);
-  return raw.map((v) => v / sum);
+export function getProperFactors(n: number): number[] {
+  const factors: number[] = [];
+  for (let d = 2; d < n; d++) {
+    if (n % d === 0) factors.push(d);
+  }
+  return factors;
 }
 
 /**
- * Returns normalized operator probabilities for allowed operators.
+ * Builds the valid number pool and normalized weights for the given mode, operator, and target T:
+ * - Simple Addition (+): numbers 1 .. T-1
+ * - Simple Subtraction (−): subtrahends 1 .. T-1 plus minuends T+1 .. min(199, T + max(4, T-1))
+ *   so every subtraction equation has valid positive integers >= 1 that can equal T cleanly.
+ * - Simple Multiplication (×): proper factors of T (2..T-1) + rare 1, avoiding T itself.
+ * - Simple Division (÷): multiples k*T (k >= 2) + divisors (2..10) + rare 1, avoiding T itself.
+ * - Operator mode (mixed ops): numbers 1 .. T-1 weighted toward factors of T, keeping 1 rare.
+ */
+export function getNumberSpawnCandidates(params: {
+  difficulty: DifficultyLevel;
+  mathMode: MathMode;
+  simpleOperator?: MathOperator;
+  target: number;
+}): WeightedNumberCandidate[] {
+  const { mathMode, simpleOperator = '+', target } = params;
+  const T = clampTarget(target);
+  const entries: Array<{ value: number; rawWeight: number }> = [];
+
+  if (mathMode === 'operator') {
+    if (T <= 2) {
+      return [{ value: 1, weight: 1 }];
+    }
+    const properFactors = new Set(getProperFactors(T));
+    const factorBoost =
+      properFactors.size > 0
+        ? Math.max(2.5, Math.min(6.0, (T - 1) / (properFactors.size * 2.2)))
+        : 1.0;
+
+    for (let n = 1; n <= T - 1; n++) {
+      let w = n === 1 ? 0.35 : 1.0;
+      if (properFactors.has(n)) {
+        w *= factorBoost;
+      }
+      entries.push({ value: n, rawWeight: w });
+    }
+  } else if (simpleOperator === '+') {
+    if (T <= 2) {
+      return [{ value: 1, weight: 1 }];
+    }
+    for (let n = 1; n <= T - 1; n++) {
+      const w = n === 1 && T > 4 ? 0.55 : 1.0;
+      entries.push({ value: n, rawWeight: w });
+    }
+  } else if (simpleOperator === '−') {
+    // Subtrahends in 1..T-1 (52% pool) + minuends in T+1..min(199, T + max(4, T-1)) (48% pool)
+    const subSpan = Math.max(1, T - 1);
+    const minEnd = Math.min(199, T + Math.max(4, T - 1));
+    const minSpan = Math.max(1, minEnd - T);
+
+    for (let n = 1; n <= T - 1; n++) {
+      const w = (n === 1 && T > 4 ? 0.65 : 1.0) * (52 / subSpan);
+      entries.push({ value: n, rawWeight: w });
+    }
+    for (let m = T + 1; m <= minEnd; m++) {
+      entries.push({ value: m, rawWeight: 48 / minSpan });
+    }
+  } else if (simpleOperator === '×') {
+    const properFactors = getProperFactors(T);
+    if (properFactors.length > 0) {
+      const factorWeightEach = 95 / properFactors.length;
+      for (const f of properFactors) {
+        // Favor balanced middle factors slightly when many exist
+        const distFromSqrt = Math.abs(Math.log(f) - Math.log(Math.sqrt(T)));
+        const bias = 1 / (1 + 0.15 * distFromSqrt);
+        entries.push({ value: f, rawWeight: factorWeightEach * bias });
+      }
+      // Keep 1 rare (~5%)
+      entries.push({ value: 1, rawWeight: 5 });
+    } else {
+      // Fallback for prime targets if somehow reached
+      entries.push({ value: T, rawWeight: 50 });
+      entries.push({ value: 1, rawWeight: 50 });
+    }
+  } else {
+    // Simple ÷: multiples k*T (k >= 2) + divisors + rare 1
+    const baseMultipliers = [2, 3, 4, 5, 6, 8, 9, 10];
+    const activeMultipliers = baseMultipliers.filter((k) => k * T <= 400);
+    const multipliers = activeMultipliers.length >= 2 ? activeMultipliers : [2, 3, 4];
+
+    const multWeightTotal = 45;
+    const divWeightTotal = 52;
+
+    for (let idx = 0; idx < multipliers.length; idx++) {
+      const k = multipliers[idx];
+      const decay = 1 / (1 + idx * 0.18);
+      entries.push({ value: k * T, rawWeight: (multWeightTotal / multipliers.length) * decay });
+    }
+
+    // Divisors: small integers >= 2 that divide our multiples cleanly (2..10, plus proper factors of active multipliers)
+    const divisorSet = new Set<number>([2, 3, 4, 5, 6]);
+    for (const k of multipliers) {
+      if (k <= 10) divisorSet.add(k);
+      for (const f of getProperFactors(k)) divisorSet.add(f);
+    }
+    const divisors = Array.from(divisorSet).sort((a, b) => a - b);
+    for (let idx = 0; idx < divisors.length; idx++) {
+      const d = divisors[idx];
+      const decay = 1 / (1 + idx * 0.15);
+      entries.push({ value: d, rawWeight: (divWeightTotal / divisors.length) * decay });
+    }
+
+    // Keep 1 rare (~3%)
+    entries.push({ value: 1, rawWeight: 3 });
+  }
+
+  const sum = entries.reduce((acc, e) => acc + e.rawWeight, 0);
+  if (sum <= 0) {
+    return [{ value: 1, weight: 1 }];
+  }
+  return entries.map((e) => ({ value: e.value, weight: e.rawWeight / sum }));
+}
+
+/**
+ * Returns normalized operator probabilities for allowed operators (Operator mode).
  */
 export function getOperatorSpawnWeights(
   difficulty: DifficultyLevel
@@ -544,21 +691,29 @@ export function getOperatorSpawnWeights(
   return entries.map((e) => ({ op: e.op, weight: e.weight / sum }));
 }
 
-export function drawWeightedNumber(
-  difficulty: DifficultyLevel,
-  target: number,
-  rng: () => number = Math.random
-): MathTileInfo {
-  const weights = getNumberSpawnWeights(difficulty, target);
+export function drawWeightedNumber(params: {
+  difficulty: DifficultyLevel;
+  mathMode: MathMode;
+  simpleOperator?: MathOperator;
+  target: number;
+  rng?: () => number;
+}): MathTileInfo {
+  const { difficulty, mathMode, simpleOperator = '+', target, rng = Math.random } = params;
+  const candidates = getNumberSpawnCandidates({
+    difficulty,
+    mathMode,
+    simpleOperator,
+    target,
+  });
   const r = rng();
   let acc = 0;
-  for (let i = 0; i < weights.length; i++) {
-    acc += weights[i];
+  for (const c of candidates) {
+    acc += c.weight;
     if (r <= acc) {
-      return makeNumberTile(i + 1);
+      return makeNumberTile(c.value);
     }
   }
-  return makeNumberTile(10);
+  return makeNumberTile(candidates[candidates.length - 1].value);
 }
 
 export function drawWeightedOperator(
@@ -584,13 +739,22 @@ export function drawWeightedOperator(
 export function drawMathTile(params: {
   difficulty: DifficultyLevel;
   mathMode: MathMode;
+  simpleOperator?: MathOperator;
   target: number;
   boardTiles: MathTileInfo[];
   rng?: () => number;
 }): MathTileInfo {
-  const { difficulty, mathMode, target, boardTiles, rng = Math.random } = params;
+  const {
+    difficulty,
+    mathMode,
+    simpleOperator = '+',
+    target,
+    boardTiles,
+    rng = Math.random,
+  } = params;
+
   if (mathMode === 'simple') {
-    return drawWeightedNumber(difficulty, target, rng);
+    return drawWeightedNumber({ difficulty, mathMode, simpleOperator, target, rng });
   }
 
   const total = boardTiles.length;
@@ -614,7 +778,7 @@ export function drawMathTile(params: {
 
   return spawnOperator
     ? drawWeightedOperator(difficulty, rng)
-    : drawWeightedNumber(difficulty, target, rng);
+    : drawWeightedNumber({ difficulty, mathMode, simpleOperator, target, rng });
 }
 
 // ============================================================================
@@ -634,7 +798,7 @@ export interface SolverResult {
 
 /**
  * Time-boxed (~5 ms) DFS solver confirming at least one valid equation equals target
- * using tiles on the board (plus incoming ones).
+ * using tiles on the board for the chosen mode and operator(s).
  */
 export function checkBoardSolvable(
   boardTiles: BoardTileRef[],
@@ -642,10 +806,12 @@ export function checkBoardSolvable(
   difficulty: DifficultyLevel,
   mathMode: MathMode,
   options?: {
+    simpleOperator?: MathOperator;
     maxNumbers?: number;
     timeBudgetMs?: number;
   }
 ): SolverResult {
+  const simpleOp = options?.simpleOperator ?? '+';
   const maxNumbers =
     options?.maxNumbers ??
     (difficulty === 'beginner' || difficulty === 'easy' ? 3 : 6);
@@ -654,11 +820,15 @@ export function checkBoardSolvable(
     (typeof performance !== 'undefined' ? performance.now() : Date.now()) + timeBudgetMs;
   const nowFn = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
-  const allowedOps = getAllowedOperators(difficulty);
+  const diffAllowedOps = getAllowedOperators(difficulty);
+  const effectiveAllowedOps: MathOperator[] =
+    mathMode === 'simple'
+      ? [diffAllowedOps.includes(simpleOp) ? simpleOp : '+']
+      : diffAllowedOps;
   const allowNeg = allowsNegativeIntermediates(difficulty);
 
-  // Bucket tile IDs by value for O(1) deduplicated branching
-  const numBuckets: string[][] = Array.from({ length: 11 }, () => []);
+  // Dynamic bucketing by distinct number value present on board (handles any range)
+  const numBuckets = new Map<number, string[]>();
   const opBuckets: Record<MathOperator, string[]> = {
     '+': [],
     '−': [],
@@ -669,17 +839,26 @@ export function checkBoardSolvable(
   for (const item of boardTiles) {
     if (item.tile.kind === 'number' && item.tile.numValue !== undefined) {
       const n = item.tile.numValue;
-      if (n >= 1 && n <= 10) {
-        numBuckets[n].push(item.id);
+      if (n >= 1 && n <= 2000) {
+        const list = numBuckets.get(n);
+        if (list) list.push(item.id);
+        else numBuckets.set(n, [item.id]);
       }
     } else if (item.tile.kind === 'operator' && item.tile.opValue) {
-      if (allowedOps.includes(item.tile.opValue)) {
+      if (effectiveAllowedOps.includes(item.tile.opValue)) {
         opBuckets[item.tile.opValue].push(item.id);
       }
     }
   }
 
-  const numCounts = numBuckets.map((b) => b.length);
+  const distinctNums = Array.from(numBuckets.keys()).sort((a, b) => a - b);
+  const numCounts = distinctNums.map((n) => numBuckets.get(n)!.length);
+  const totalNumsAvailable = numCounts.reduce((s, c) => s + c, 0);
+
+  if (totalNumsAvailable < 2) {
+    return { solvable: false, solutionTileIds: [], timedOut: false };
+  }
+
   const opCounts: Record<MathOperator, number> = {
     '+': opBuckets['+'].length,
     '−': opBuckets['−'].length,
@@ -687,14 +866,8 @@ export function checkBoardSolvable(
     '÷': opBuckets['÷'].length,
   };
 
-  let totalNumsAvailable = 0;
-  for (let n = 1; n <= 10; n++) totalNumsAvailable += numCounts[n];
-  if (totalNumsAvailable < 2) {
-    return { solvable: false, solutionTileIds: [], timedOut: false };
-  }
-
   if (mathMode === 'operator') {
-    const totalOpsAvailable = allowedOps.reduce((s, op) => s + opCounts[op], 0);
+    const totalOpsAvailable = effectiveAllowedOps.reduce((s, op) => s + opCounts[op], 0);
     if (totalOpsAvailable < 1) {
       return { solvable: false, solutionTileIds: [], timedOut: false };
     }
@@ -708,14 +881,18 @@ export function checkBoardSolvable(
   const evalOptions: EvaluateOptions = { difficulty, mathMode, target };
 
   function buildSolutionIds(): string[] {
-    const usedNumOffset = new Array<number>(11).fill(0);
+    const usedNumOffset = new Map<number, number>();
     const usedOpOffset: Record<MathOperator, number> = { '+': 0, '−': 0, '×': 0, '÷': 0 };
     const ids: string[] = [];
 
     for (let i = 0; i < chosenNums.length; i++) {
       const n = chosenNums[i];
-      const numId = numBuckets[n][usedNumOffset[n]++];
-      if (numId) ids.push(numId);
+      const off = usedNumOffset.get(n) ?? 0;
+      const bucket = numBuckets.get(n);
+      if (bucket && bucket[off]) {
+        ids.push(bucket[off]);
+      }
+      usedNumOffset.set(n, off + 1);
 
       if (mathMode === 'operator' && i < chosenOps.length) {
         const op = chosenOps[i];
@@ -753,20 +930,21 @@ export function checkBoardSolvable(
     }
 
     if (depth === 0) {
-      for (let n = 1; n <= 10; n++) {
-        if (numCounts[n] === 0) continue;
-        numCounts[n]--;
+      for (let i = 0; i < distinctNums.length; i++) {
+        if (numCounts[i] === 0) continue;
+        const n = distinctNums[i];
+        numCounts[i]--;
         chosenNums.push(n);
         if (dfs(1, 0, '+', n)) return true;
         chosenNums.pop();
-        numCounts[n]++;
+        numCounts[i]++;
         if (timedOut) return false;
       }
       return false;
     }
 
-    for (let oi = 0; oi < allowedOps.length; oi++) {
-      const op = allowedOps[oi];
+    for (let oi = 0; oi < effectiveAllowedOps.length; oi++) {
+      const op = effectiveAllowedOps[oi];
       if (mathMode === 'operator' && opCounts[op] === 0) continue;
 
       if (op === '+' || op === '−') {
@@ -777,13 +955,19 @@ export function checkBoardSolvable(
         if (mathMode === 'operator') opCounts[op]--;
         chosenOps.push(op);
 
-        for (let n = 1; n <= 10; n++) {
-          if (numCounts[n] === 0) continue;
-          numCounts[n]--;
+        for (let i = 0; i < distinctNums.length; i++) {
+          if (numCounts[i] === 0) continue;
+          const n = distinctNums[i];
+          // Quick pruning for monotonic Simple + / −
+          if (mathMode === 'simple' && effectiveAllowedOps.length === 1) {
+            if (op === '+' && nextRunningAdd + n > target) continue;
+            if (op === '−' && nextRunningAdd - n < target) continue;
+          }
+          numCounts[i]--;
           chosenNums.push(n);
           if (dfs(depth + 1, nextRunningAdd, op, n)) return true;
           chosenNums.pop();
-          numCounts[n]++;
+          numCounts[i]++;
           if (timedOut) break;
         }
 
@@ -794,16 +978,22 @@ export function checkBoardSolvable(
         if (mathMode === 'operator') opCounts[op]--;
         chosenOps.push(op);
 
-        for (let n = 1; n <= 10; n++) {
-          if (numCounts[n] === 0) continue;
+        for (let i = 0; i < distinctNums.length; i++) {
+          if (numCounts[i] === 0) continue;
+          const n = distinctNums[i];
           if (op === '÷' && termVal % n !== 0) continue;
           const nextTermVal = op === '×' ? termVal * n : termVal / n;
+          // Quick pruning for Simple × / ÷
+          if (mathMode === 'simple' && effectiveAllowedOps.length === 1) {
+            if (op === '×' && nextTermVal > target) continue;
+            if (op === '÷' && nextTermVal < target) continue;
+          }
 
-          numCounts[n]--;
+          numCounts[i]--;
           chosenNums.push(n);
           if (dfs(depth + 1, runningAdd, termSign, nextTermVal)) return true;
           chosenNums.pop();
-          numCounts[n]++;
+          numCounts[i]++;
           if (timedOut) break;
         }
 
@@ -824,9 +1014,6 @@ export function checkBoardSolvable(
   return { solvable: false, solutionTileIds: [], timedOut };
 }
 
-/**
- * Weighted-random choice among scored candidate entries.
- */
 function pickWeightedCandidate<T>(
   items: Array<{ item: T; weight: number }>,
   rng: () => number
@@ -843,6 +1030,53 @@ function pickWeightedCandidate<T>(
 }
 
 /**
+ * Computes direct completion numbers implied by current board tiles to keep helper selection < 1ms
+ * even when T is large (e.g. T=100).
+ */
+function getPrioritizedCompletionNumbers(params: {
+  boardTiles: BoardTileRef[];
+  target: number;
+  mathMode: MathMode;
+  simpleOperator: MathOperator;
+  validNumberSet: Set<number>;
+}): number[] {
+  const { boardTiles, target, mathMode, simpleOperator, validNumberSet } = params;
+  const boardNums = boardTiles
+    .filter((b) => b.tile.kind === 'number' && b.tile.numValue !== undefined)
+    .map((b) => b.tile.numValue!);
+
+  const suggestions = new Set<number>();
+  const addIfValid = (v: number) => {
+    if (Number.isInteger(v) && validNumberSet.has(v)) {
+      suggestions.add(v);
+    }
+  };
+
+  for (const a of boardNums) {
+    if (mathMode === 'simple') {
+      if (simpleOperator === '+') {
+        addIfValid(target - a);
+      } else if (simpleOperator === '−') {
+        addIfValid(target + a);
+        addIfValid(a - target);
+      } else if (simpleOperator === '×') {
+        if (target % a === 0 && a > 1) addIfValid(target / a);
+      } else if (simpleOperator === '÷') {
+        if (a > 1) addIfValid(a * target);
+        if (a > target && a % target === 0) addIfValid(a / target);
+      }
+    } else {
+      addIfValid(target - a);
+      addIfValid(a - target);
+      if (target % a === 0 && a > 1) addIfValid(target / a);
+      if (a > target && a % target === 0) addIfValid(a / target);
+    }
+  }
+
+  return Array.from(suggestions);
+}
+
+/**
  * Selects a weighted-random candidate tile that creates a solution on the board,
  * or falls back to a regular weighted tile if no single tile can solve it yet.
  */
@@ -851,17 +1085,57 @@ export function pickHelperTile(params: {
   target: number;
   difficulty: DifficultyLevel;
   mathMode: MathMode;
+  simpleOperator?: MathOperator;
   rng?: () => number;
 }): { tile: MathTileInfo; createdSolution: boolean } {
-  const { boardTiles, target, difficulty, mathMode, rng = Math.random } = params;
-  const numWeights = getNumberSpawnWeights(difficulty, target);
-  const opWeights = getOperatorSpawnWeights(difficulty);
+  const {
+    boardTiles,
+    target,
+    difficulty,
+    mathMode,
+    simpleOperator = '+',
+    rng = Math.random,
+  } = params;
 
+  const numCandidates = getNumberSpawnCandidates({
+    difficulty,
+    mathMode,
+    simpleOperator,
+    target,
+  });
+  const opWeights = getOperatorSpawnWeights(difficulty);
+  const validNumMap = new Map<number, number>(numCandidates.map((c) => [c.value, c.weight]));
+  const validNumSet = new Set<number>(numCandidates.map((c) => c.value));
+
+  const prioritizedNums = getPrioritizedCompletionNumbers({
+    boardTiles,
+    target,
+    mathMode,
+    simpleOperator,
+    validNumberSet: validNumSet,
+  });
+
+  // Assemble probe list capped cleanly (~28 candidates) with direct algebraic matches first
   const candidates: Array<{ tile: MathTileInfo; weight: number }> = [];
-  for (let n = 1; n <= 10; n++) {
+  const addedNum = new Set<number>();
+
+  for (const pn of prioritizedNums) {
+    addedNum.add(pn);
     candidates.push({
-      tile: makeNumberTile(n),
-      weight: numWeights[n - 1] * (mathMode === 'operator' ? 0.6 : 1),
+      tile: makeNumberTile(pn),
+      weight: (validNumMap.get(pn) ?? 0.05) * (mathMode === 'operator' ? 0.6 : 1),
+    });
+  }
+
+  // Add weighted sample from remaining pool
+  const remainingPool = numCandidates
+    .filter((c) => !addedNum.has(c.value))
+    .sort((a, b) => b.weight - a.weight);
+
+  for (const c of remainingPool.slice(0, 20)) {
+    candidates.push({
+      tile: makeNumberTile(c.value),
+      weight: c.weight * (mathMode === 'operator' ? 0.6 : 1),
     });
   }
 
@@ -874,21 +1148,24 @@ export function pickHelperTile(params: {
     }
   }
 
-  // Respect operator board ratio preference in operator mode when selecting candidates
   let orderedCandidates = [...candidates];
   if (mathMode === 'operator' && boardTiles.length >= 2) {
     const opCount = boardTiles.filter((t) => t.tile.kind === 'operator').length;
     const ratio = opCount / boardTiles.length;
     if (ratio < 0.3) {
-      orderedCandidates.sort((a, b) => (a.tile.kind === 'operator' ? -1 : 1) - (b.tile.kind === 'operator' ? -1 : 1));
+      orderedCandidates.sort(
+        (a, b) => (a.tile.kind === 'operator' ? 0 : 1) - (b.tile.kind === 'operator' ? 0 : 1)
+      );
     } else if (ratio > 0.5) {
-      orderedCandidates.sort((a, b) => (a.tile.kind === 'number' ? -1 : 1) - (b.tile.kind === 'number' ? -1 : 1));
+      orderedCandidates.sort(
+        (a, b) => (a.tile.kind === 'number' ? 0 : 1) - (b.tile.kind === 'number' ? 0 : 1)
+      );
     }
   }
 
   const maxNumbers = difficulty === 'beginner' || difficulty === 'easy' ? 3 : 6;
   const totalBudgetDeadline =
-    (typeof performance !== 'undefined' ? performance.now() : Date.now()) + 5.5;
+    (typeof performance !== 'undefined' ? performance.now() : Date.now()) + 5.0;
   const nowFn = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
   const solvingCandidates: Array<{ tile: MathTileInfo; weight: number }> = [];
@@ -902,8 +1179,9 @@ export function pickHelperTile(params: {
       { id: '__helper_probe__', tile: cand.tile },
     ];
     const res = checkBoardSolvable(virtualBoard, target, difficulty, mathMode, {
+      simpleOperator,
       maxNumbers,
-      timeBudgetMs: 1.5,
+      timeBudgetMs: 1.2,
     });
     if (res.solvable) {
       solvingCandidates.push(cand);
@@ -920,11 +1198,11 @@ export function pickHelperTile(params: {
     };
   }
 
-  // No single tile creates a solution yet (e.g., board has 0 tiles or needs 2+ tiles)
   return {
     tile: drawMathTile({
       difficulty,
       mathMode,
+      simpleOperator,
       target,
       boardTiles: boardTiles.map((b) => b.tile),
       rng,
@@ -934,95 +1212,96 @@ export function pickHelperTile(params: {
 }
 
 /**
- * Generates a small guaranteed 2- or 3-number equation recipe for rescue fallback.
+ * Generates a guaranteed 2- or 3-tile recipe within the valid number pool for rescue fallback.
  */
 function findConstructive3TileRecipe(
   target: number,
   difficulty: DifficultyLevel,
   mathMode: MathMode,
-  existingTiles: BoardTileRef[],
+  simpleOperator: MathOperator,
   rng: () => number
 ): MathTileInfo[] | null {
-  const allowedOps = getAllowedOperators(difficulty);
   const evalOptions: EvaluateOptions = { difficulty, mathMode, target };
+  const numCandidates = getNumberSpawnCandidates({
+    difficulty,
+    mathMode,
+    simpleOperator,
+    target,
+  })
+    .map((c) => c.value)
+    .filter((v) => v > 1 || target <= 2);
 
-  // In Operator mode, replacing 3 tiles can directly place [numA, op, numB] for 2-number solutions
+  const fallbackPool =
+    numCandidates.length > 0 ? numCandidates : [1, Math.max(1, target - 1)];
+
   if (mathMode === 'operator') {
-    for (let a = 1; a <= 10; a++) {
-      for (const op of allowedOps) {
-        for (let b = 1; b <= 10; b++) {
-          const ev = evaluateEquation([a, b], [op], evalOptions);
-          if (ev.isValidMath && ev.matchesTarget) {
-            return [makeNumberTile(a), makeOperatorTile(op), makeNumberTile(b)];
-          }
-        }
+    const allowedOps = getAllowedOperators(difficulty);
+    // Try direct a op b = target
+    for (let attempt = 0; attempt < 150; attempt++) {
+      const a = fallbackPool[Math.floor(rng() * fallbackPool.length)];
+      const b = fallbackPool[Math.floor(rng() * fallbackPool.length)];
+      const op = allowedOps[Math.floor(rng() * allowedOps.length)];
+      const ev = evaluateEquation([a, b], [op], evalOptions);
+      if (ev.isValidMath && ev.matchesTarget) {
+        return [makeNumberTile(a), makeOperatorTile(op), makeNumberTile(b)];
       }
     }
-    // Otherwise try combining 2 numbers + 1 operator with an existing number/operator on board
-    const existingNums = Array.from(
-      new Set(
-        existingTiles
-          .filter((t) => t.tile.kind === 'number' && t.tile.numValue !== undefined)
-          .map((t) => t.tile.numValue!)
-      )
-    );
-    const existingOps = Array.from(
-      new Set(
-        existingTiles
-          .filter((t) => t.tile.kind === 'operator' && t.tile.opValue)
-          .map((t) => t.tile.opValue!)
-          .filter((op) => allowedOps.includes(op))
-      )
-    );
-
-    if (existingOps.length > 0 && existingNums.length > 0) {
-      const op1 = existingOps[0];
-      const n1 = existingNums[0];
-      for (let a = 1; a <= 10; a++) {
-        for (let b = 1; b <= 10; b++) {
-          for (const op2 of allowedOps) {
-            const ev = evaluateEquation([n1, a, b], [op1, op2], evalOptions);
-            if (ev.isValidMath && ev.matchesTarget) {
-              return [makeNumberTile(a), makeOperatorTile(op2), makeNumberTile(b)];
-            }
-            const ev2 = evaluateEquation([a, b, n1], [op2, op1], evalOptions);
-            if (ev2.isValidMath && ev2.matchesTarget) {
-              return [makeNumberTile(a), makeOperatorTile(op2), makeNumberTile(b)];
-            }
-          }
-        }
+    // Deterministic fallback for target >= 2 in [1..T-1]
+    if (target >= 2) {
+      const a = Math.max(1, Math.floor(target / 2));
+      const b = target - a;
+      const ev = evaluateEquation([a, b], ['+'], evalOptions);
+      if (ev.isValidMath && ev.matchesTarget) {
+        return [makeNumberTile(a), makeOperatorTile('+'), makeNumberTile(b)];
       }
     }
     return null;
   }
 
-  // Simple mode: replacing 3 tiles provides 3 numbers!
-  // Check 2-number solution first (+ a random weighted 3rd)
-  for (let a = 1; a <= 10; a++) {
-    for (let b = 1; b <= 10; b++) {
-      for (const op of allowedOps) {
-        const ev = evaluateEquation([a, b], [op], evalOptions);
-        if (ev.isValidMath && ev.matchesTarget) {
-          return [makeNumberTile(a), makeNumberTile(b), drawWeightedNumber(difficulty, target, rng)];
-        }
+  // Simple mode: construct 2-number solution + 3rd valid weighted tile
+  const filler = drawWeightedNumber({
+    difficulty,
+    mathMode,
+    simpleOperator,
+    target,
+    rng,
+  });
+
+  if (simpleOperator === '+') {
+    const a = target <= 2 ? 1 : 1 + Math.floor(rng() * (target - 1));
+    const b = target - a;
+    if (b >= 1) {
+      const ev = evaluateEquation([a, b], ['+'], evalOptions);
+      if (ev.isValidMath && ev.matchesTarget) {
+        return [makeNumberTile(a), makeNumberTile(b), filler];
       }
     }
-  }
-  // Check 3-number solution
-  for (let a = 1; a <= 10; a++) {
-    for (let b = 1; b <= 10; b++) {
-      for (let c = 1; c <= 10; c++) {
-        for (const op1 of allowedOps) {
-          for (const op2 of allowedOps) {
-            const ev = evaluateEquation([a, b, c], [op1, op2], evalOptions);
-            if (ev.isValidMath && ev.matchesTarget) {
-              return [makeNumberTile(a), makeNumberTile(b), makeNumberTile(c)];
-            }
-          }
-        }
+  } else if (simpleOperator === '−') {
+    const k = target <= 2 ? 1 : 1 + Math.floor(rng() * (target - 1));
+    const a = target + k;
+    const ev = evaluateEquation([a, k], ['−'], evalOptions);
+    if (ev.isValidMath && ev.matchesTarget) {
+      return [makeNumberTile(a), makeNumberTile(k), filler];
+    }
+  } else if (simpleOperator === '×') {
+    const factors = getProperFactors(target);
+    if (factors.length > 0) {
+      const a = factors[Math.floor(rng() * factors.length)];
+      const b = target / a;
+      const ev = evaluateEquation([a, b], ['×'], evalOptions);
+      if (ev.isValidMath && ev.matchesTarget) {
+        return [makeNumberTile(a), makeNumberTile(b), filler];
       }
     }
+  } else if (simpleOperator === '÷') {
+    const divisors = [2, 3, 4, 5, 6].filter((d) => d * target <= 500);
+    const k = divisors[Math.floor(rng() * Math.max(1, divisors.length))] || 2;
+    const ev = evaluateEquation([k * target, k], ['÷'], evalOptions);
+    if (ev.isValidMath && ev.matchesTarget) {
+      return [makeNumberTile(k * target), makeNumberTile(k), filler];
+    }
   }
+
   return null;
 }
 
@@ -1035,9 +1314,17 @@ export function computeBoardRescueReplacements(params: {
   target: number;
   difficulty: DifficultyLevel;
   mathMode: MathMode;
+  simpleOperator?: MathOperator;
   rng?: () => number;
 }): Array<{ id: string; newTile: MathTileInfo }> {
-  const { frozenTiles, target, difficulty, mathMode, rng = Math.random } = params;
+  const {
+    frozenTiles,
+    target,
+    difficulty,
+    mathMode,
+    simpleOperator = '+',
+    rng = Math.random,
+  } = params;
   if (frozenTiles.length === 0) return [];
 
   const count = Math.min(3, frozenTiles.length);
@@ -1054,7 +1341,6 @@ export function computeBoardRescueReplacements(params: {
   const remainingPool: BoardTileRef[] = frozenTiles.filter((_, idx) => !chosenSet.has(idx));
   const maxNumbers = difficulty === 'beginner' || difficulty === 'easy' ? 3 : 6;
 
-  // Iteratively pick up to `count` helpers
   const replacements: MathTileInfo[] = [];
   let workingPool = [...remainingPool];
 
@@ -1064,6 +1350,7 @@ export function computeBoardRescueReplacements(params: {
       target,
       difficulty,
       mathMode,
+      simpleOperator,
       rng,
     });
     replacements.push(picked.tile);
@@ -1073,14 +1360,20 @@ export function computeBoardRescueReplacements(params: {
     ];
   }
 
-  // Verify the rescued board actually has a solution; if not, apply constructive 3-tile recipe
   const check = checkBoardSolvable(workingPool, target, difficulty, mathMode, {
+    simpleOperator,
     maxNumbers,
     timeBudgetMs: 4,
   });
 
   if (!check.solvable && count === 3) {
-    const recipe = findConstructive3TileRecipe(target, difficulty, mathMode, remainingPool, rng);
+    const recipe = findConstructive3TileRecipe(
+      target,
+      difficulty,
+      mathMode,
+      simpleOperator,
+      rng
+    );
     if (recipe && recipe.length === 3) {
       return chosenIndices.map((boardIdx, k) => ({
         id: frozenTiles[boardIdx].id,

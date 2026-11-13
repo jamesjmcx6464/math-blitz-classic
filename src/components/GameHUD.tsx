@@ -11,7 +11,7 @@ import {
   Users,
   HelpCircle,
 } from 'lucide-react';
-import { ViewMode, ClassroomMatchState, MathMode } from '../types/game';
+import { ViewMode, ClassroomMatchState, MathMode, MathOperator } from '../types/game';
 import gsap from 'gsap';
 
 interface GameHUDProps {
@@ -29,6 +29,7 @@ interface GameHUDProps {
   onOpenHowToPlay?: () => void;
   target: number;
   mathMode: MathMode;
+  simpleOperator?: MathOperator;
   classroomMatch?: ClassroomMatchState | null;
   onOpenScoreboard?: () => void;
   soloPlayer?: { name: string; logo: string } | null;
@@ -103,6 +104,7 @@ export const GameHUD: React.FC<GameHUDProps> = ({
   onOpenHowToPlay,
   target,
   mathMode,
+  simpleOperator = '+',
   classroomMatch,
   onOpenScoreboard,
   soloPlayer,
@@ -129,7 +131,8 @@ export const GameHUD: React.FC<GameHUDProps> = ({
                 {currentTeam.name}
               </span>
               <span className="text-[10px] sm:text-xs font-bold text-slate-300 block leading-none">
-                R{classroomMatch.currentRound}/{classroomMatch.config.totalRounds} · Make {target}
+                R{classroomMatch.currentRound}/{classroomMatch.config.totalRounds} · Make {target} ·{' '}
+                {mathMode === 'operator' ? '2× Op' : simpleOperator}
               </span>
             </div>
           </div>
@@ -249,6 +252,21 @@ export const GameHUD: React.FC<GameHUDProps> = ({
           </div>
           <div className="text-xl sm:text-2xl font-display font-black text-amber-300 font-mono leading-none">
             <RollingScore value={score} />
+          </div>
+        </div>
+
+        <div className="pl-2 sm:pl-3 border-l border-slate-800 shrink-0">
+          <span className="text-[10px] sm:text-xs font-bold text-emerald-400 flex items-center gap-1 leading-tight">
+            <Target className="w-3 h-3 shrink-0" />
+            <span>Target</span>
+          </span>
+          <div className="text-base sm:text-lg font-display font-black text-white font-mono leading-none flex items-center gap-1">
+            <span>{target}</span>
+            {mathMode === 'simple' && (
+              <span className="text-xs font-mono font-black text-sky-300 bg-sky-500/20 px-1.5 py-0.5 rounded-md border border-sky-400/40">
+                {simpleOperator}
+              </span>
+            )}
           </div>
         </div>
 

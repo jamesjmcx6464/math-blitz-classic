@@ -80,10 +80,10 @@ export const HowToPlayModal: React.FC<HowToPlayModalProps> = ({ onClose }) => {
               4
             </span>
             <div>
-              <strong className="text-white block">Simple vs. Operator mode</strong>
+              <strong className="text-white block">Pre-game target &amp; mode setup</strong>
               <p className="mt-0.5 leading-relaxed">
-                In <strong className="text-white">Simple mode</strong>, only numbers fall—tap the operator selector buttons (or press{' '}
-                <span className="font-mono text-slate-100">+ - * /</span>) to choose which operator gets inserted before your <em>next</em> number. In{' '}
+                Pick your target number (<span className="font-mono text-slate-100">2–100</span>) before playing. In{' '}
+                <strong className="text-white">Simple mode</strong>, choose your operator (<span className="font-mono text-slate-100">+ − × ÷</span>) before the round starts—only numbers fall, and your chosen operator is auto-inserted for the entire round. In{' '}
                 <strong className="text-white">Operator mode</strong>, operator tiles fall on the board too, and your score is doubled!
               </p>
             </div>

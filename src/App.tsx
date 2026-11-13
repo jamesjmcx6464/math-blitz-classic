@@ -33,7 +33,9 @@ import {
 } from './utils/hexPhysics';
 import {
   getAllowedOperators,
-  normalizeOperatorKey,
+  clampTarget,
+  isCompositeTarget,
+  nearestCompositeTarget,
   evaluateEquation,
   evaluateOperatorTokens,
   formatEquationString,
@@ -52,6 +54,10 @@ import {
   saveDifficulty,
   getSavedMathMode,
   saveMathMode,
+  getSavedSimpleOperator,
+  saveSimpleOperator,
+  getSavedTarget,
+  saveTarget,
 } from './utils/difficulty';
 import { recordSoloPlayerResult } from './utils/registeredPlayers';
 import { detectDevice } from './utils/screenMode';
@@ -104,8 +110,16 @@ export default function App() {
   const mathModeRef = useRef<MathMode>(mathMode);
   mathModeRef.current = mathMode;
 
-  // Target & Practice flags for active game
-  const [target, setTarget] = useState<number>(10);
+  const [simpleOperator, setSimpleOperator] = useState<MathOperator>(() => {
+    const savedOp = getSavedSimpleOperator();
+    const allowed = getAllowedOperators(getSavedDifficulty());
+    return allowed.includes(savedOp) ? savedOp : '+';
+  });
+  const simpleOperatorRef = useRef<MathOperator>(simpleOperator);
+  simpleOperatorRef.current = simpleOperator;
+
+  // Target & Practice flags (saved & chosen pre-game, default 10)
+  const [target, setTarget] = useState<number>(() => getSavedTarget());
   const targetRef = useRef<number>(target);
   targetRef.current = target;
 
@@ -120,8 +134,16 @@ export default function App() {
   const lastQuickPlayConfigRef = useRef<{
     difficulty: DifficultyLevel;
     mathMode: MathMode;
+    simpleOperator: MathOperator;
+    target: number;
     timeLimit: number;
-  }>({ difficulty, mathMode, timeLimit: 60 });
+  }>({
+    difficulty,
+    mathMode,
+    simpleOperator,
+    target,
+    timeLimit: 60,
+  });
 
   // Screen mode detection
   const [screenMode, setScreenMode] = useState<ScreenModeType>(() => detectDevice());
@@ -173,8 +195,6 @@ export default function App() {
   fallingTilesRef.current = fallingTiles;
 
   const [selectedTiles, setSelectedTiles] = useState<HexTile[]>([]);
-  const [simpleOperators, setSimpleOperators] = useState<MathOperator[]>([]);
-  const [activeSimpleOperator, setActiveSimpleOperator] = useState<MathOperator>('+');
 
   const [floatingScores, setFloatingScores] = useState<FloatingScore[]>([]);
   const [pulsingTileIds, setPulsingTileIds] = useState<Set<string>>(new Set());
@@ -281,8 +301,12 @@ export default function App() {
     const preset = DIFFICULTY_PRESETS[level];
     spawnIntervalRef.current = preset.spawnIntervalMs;
     const allowed = getAllowedOperators(level);
-    if (!allowed.includes(activeSimpleOperator)) {
-      setActiveSimpleOperator('+');
+    let nextOp = simpleOperatorRef.current;
+    if (!allowed.includes(nextOp)) {
+      nextOp = '+';
+      setSimpleOperator(nextOp);
+      simpleOperatorRef.current = nextOp;
+      saveSimpleOperator(nextOp);
     }
     handleUpdateFreePlaySettings({
       ...freePlaySettingsRef.current,
@@ -290,7 +314,7 @@ export default function App() {
       tileRadius: preset.tileRadius,
       ceilingHeight: preset.ceilingHeight,
       speedIncreaseRate: preset.speedIncreaseRate,
-      target: preset.targetRange.defaultTarget,
+      simpleOperator: nextOp,
     });
   };
 
@@ -301,6 +325,37 @@ export default function App() {
     handleUpdateFreePlaySettings({
       ...freePlaySettingsRef.current,
       mathMode: nextMode,
+    });
+  };
+
+  const handleChangeSimpleOperator = (op: MathOperator) => {
+    const allowed = getAllowedOperators(difficultyRef.current);
+    if (!allowed.includes(op)) return;
+    setSimpleOperator(op);
+    simpleOperatorRef.current = op;
+    saveSimpleOperator(op);
+    let nextTarget = targetRef.current;
+    if (op === '×' && !isCompositeTarget(nextTarget)) {
+      nextTarget = nearestCompositeTarget(nextTarget);
+      setTarget(nextTarget);
+      targetRef.current = nextTarget;
+      saveTarget(nextTarget);
+    }
+    handleUpdateFreePlaySettings({
+      ...freePlaySettingsRef.current,
+      simpleOperator: op,
+      target: nextTarget,
+    });
+  };
+
+  const handleChangeTarget = (nextTarget: number) => {
+    const clamped = clampTarget(nextTarget);
+    setTarget(clamped);
+    targetRef.current = clamped;
+    saveTarget(clamped);
+    handleUpdateFreePlaySettings({
+      ...freePlaySettingsRef.current,
+      target: clamped,
     });
   };
 
@@ -325,7 +380,10 @@ export default function App() {
         targetRef.current,
         difficultyRef.current,
         mathModeRef.current,
-        { timeBudgetMs: 5 }
+        {
+          simpleOperator: simpleOperatorRef.current,
+          timeBudgetMs: 5,
+        }
       );
       solvabilityStateRef.current = {
         solvable: res.solvable,
@@ -337,7 +395,7 @@ export default function App() {
     }, 0);
 
     return () => clearTimeout(timer);
-  }, [screen, frozenTiles, fallingTiles, target, difficulty, mathMode]);
+  }, [screen, frozenTiles, fallingTiles, target, difficulty, mathMode, simpleOperator]);
 
   // Beginner / Easy 15-second idle hint pulse
   useEffect(() => {
@@ -499,6 +557,7 @@ export default function App() {
     const stats = saveHighScore({
       mode,
       mathMode: mathModeRef.current,
+      simpleOperator: simpleOperatorRef.current,
       timeBucket,
       timeSeconds: roundSec,
       difficulty: difficultyRef.current,
@@ -517,6 +576,7 @@ export default function App() {
         entryId: stats.entryId,
         mode: 'solo',
         mathMode: mathModeRef.current,
+        operator: mathModeRef.current === 'operator' ? 'mixed' : simpleOperatorRef.current,
         timeBucket,
         difficulty: difficultyRef.current,
         target: targetRef.current,
@@ -551,7 +611,6 @@ export default function App() {
       fallingTilesRef.current = [];
       setFallingTiles([]);
       setSelectedTiles([]);
-      setSimpleOperators([]);
 
       const turnSummary: TurnSummary = {
         teamName: curTeam.name,
@@ -616,6 +675,7 @@ export default function App() {
           saveHighScore({
             mode: 'team',
             mathMode: cur.config.mathMode,
+            simpleOperator: cur.config.simpleOperator,
             timeBucket: teamBucket,
             timeSeconds: teamTimeSec,
             difficulty: difficultyRef.current,
@@ -649,7 +709,10 @@ export default function App() {
         targetRef.current,
         difficultyRef.current,
         mathModeRef.current,
-        { timeBudgetMs: 5 }
+        {
+          simpleOperator: simpleOperatorRef.current,
+          timeBudgetMs: 5,
+        }
       );
 
       if (res.solvable) {
@@ -672,6 +735,7 @@ export default function App() {
         target: targetRef.current,
         difficulty: difficultyRef.current,
         mathMode: mathModeRef.current,
+        simpleOperator: simpleOperatorRef.current,
         rng: rngRef.current,
       });
 
@@ -694,7 +758,6 @@ export default function App() {
       setSelectedTiles((prev) => {
         const filtered = prev.filter((st) => nextFrozen.some((nf) => nf.id === st.id && !replaceMap.has(nf.id)));
         if (filtered.length !== prev.length) {
-          setSimpleOperators([]);
           return [];
         }
         return prev;
@@ -767,6 +830,7 @@ export default function App() {
         target: targetRef.current,
         difficulty: difficultyRef.current,
         mathMode: mathModeRef.current,
+        simpleOperator: simpleOperatorRef.current,
         rng: rngRef.current,
       });
       drawnTile = picked.tile;
@@ -775,6 +839,7 @@ export default function App() {
       drawnTile = drawMathTile({
         difficulty: difficultyRef.current,
         mathMode: mathModeRef.current,
+        simpleOperator: simpleOperatorRef.current,
         target: targetRef.current,
         boardTiles: allRefs.map((b) => b.tile),
         rng: rngRef.current,
@@ -863,6 +928,7 @@ export default function App() {
     spawnIntervalMs?: number;
     dynamicPace?: boolean;
     mathMode?: MathMode;
+    simpleOperator?: MathOperator;
     target?: number;
     isPractice?: boolean;
   }) => {
@@ -871,7 +937,14 @@ export default function App() {
 
     const preset = DIFFICULTY_PRESETS[difficultyRef.current];
     const nextMathMode = overrides?.mathMode ?? mathModeRef.current;
-    const nextTarget = overrides?.target ?? freePlaySettingsRef.current.target ?? preset.targetRange.defaultTarget;
+    const allowed = getAllowedOperators(difficultyRef.current);
+    const requestedOp = overrides?.simpleOperator ?? simpleOperatorRef.current;
+    const nextSimpleOp: MathOperator = allowed.includes(requestedOp) ? requestedOp : '+';
+    const requiresComp = nextMathMode === 'simple' && nextSimpleOp === '×';
+    const nextTarget = clampTarget(
+      overrides?.target ?? targetRef.current,
+      requiresComp
+    );
     const nextPractice = overrides?.isPractice ?? false;
     const effectiveTimeLimit =
       nextPractice
@@ -882,6 +955,8 @@ export default function App() {
 
     setMathMode(nextMathMode);
     mathModeRef.current = nextMathMode;
+    setSimpleOperator(nextSimpleOp);
+    simpleOperatorRef.current = nextSimpleOp;
     setTarget(nextTarget);
     targetRef.current = nextTarget;
     setIsPractice(nextPractice);
@@ -905,8 +980,6 @@ export default function App() {
     setFrozenTiles([]);
     setFallingTiles([]);
     setSelectedTiles([]);
-    setSimpleOperators([]);
-    setActiveSimpleOperator('+');
     setFloatingScores([]);
     setPulsingTileIds(new Set());
     setHintTileIds(new Set());
@@ -935,10 +1008,12 @@ export default function App() {
     }, 280);
   };
 
-  // Quick Play: Target 10, 60s, active Difficulty & MathMode
+  // Quick Play: 60s, uses player's chosen Target, Operator, Difficulty & MathMode
   const launchQuickPlayWithConfig = (
     diffLevel: DifficultyLevel,
     mode: MathMode,
+    op: MathOperator,
+    chosenTarget: number,
     timeLimitSec: number
   ) => {
     setCurrentSoloPlayer(null);
@@ -946,9 +1021,15 @@ export default function App() {
     setLastSoloResult(null);
 
     const preset = DIFFICULTY_PRESETS[diffLevel];
+    const allowed = getAllowedOperators(diffLevel);
+    const safeOp: MathOperator = allowed.includes(op) ? op : '+';
+    const safeTarget = clampTarget(chosenTarget, mode === 'simple' && safeOp === '×');
+
     lastQuickPlayConfigRef.current = {
       difficulty: diffLevel,
       mathMode: mode,
+      simpleOperator: safeOp,
+      target: safeTarget,
       timeLimit: timeLimitSec,
     };
 
@@ -959,7 +1040,8 @@ export default function App() {
       ceilingHeight: preset.ceilingHeight,
       speedIncreaseRate: preset.speedIncreaseRate,
       mathMode: mode,
-      target: 10,
+      simpleOperator: safeOp,
+      target: safeTarget,
       timeLimit: timeLimitSec,
       isPractice: false,
       speedIncreaseEnabled: true,
@@ -972,19 +1054,31 @@ export default function App() {
       spawnIntervalMs: preset.spawnIntervalMs,
       dynamicPace: true,
       mathMode: mode,
-      target: 10,
+      simpleOperator: safeOp,
+      target: safeTarget,
       isPractice: false,
     });
   };
 
   const handleQuickPlay = () => {
-    launchQuickPlayWithConfig(difficultyRef.current, mathModeRef.current, 60);
+    launchQuickPlayWithConfig(
+      difficultyRef.current,
+      mathModeRef.current,
+      simpleOperatorRef.current,
+      targetRef.current,
+      60
+    );
   };
 
   const handleQuickPlayAgain = () => {
-    const { difficulty: savedDiff, mathMode: savedMode, timeLimit } =
-      lastQuickPlayConfigRef.current;
-    launchQuickPlayWithConfig(savedDiff, savedMode, timeLimit);
+    const {
+      difficulty: savedDiff,
+      mathMode: savedMode,
+      simpleOperator: savedOp,
+      target: savedTarget,
+      timeLimit,
+    } = lastQuickPlayConfigRef.current;
+    launchQuickPlayWithConfig(savedDiff, savedMode, savedOp, savedTarget, timeLimit);
   };
 
   // Named Solo Play
@@ -992,6 +1086,7 @@ export default function App() {
     playerName: string,
     playerLogo: string,
     chosenMathMode: MathMode,
+    chosenSimpleOp: MathOperator,
     chosenTarget: number,
     roundSeconds: number,
     chosenPractice: boolean
@@ -1003,6 +1098,17 @@ export default function App() {
     setIsSoloSetupOpen(false);
 
     const preset = DIFFICULTY_PRESETS[difficultyRef.current];
+    const allowed = getAllowedOperators(difficultyRef.current);
+    const safeOp: MathOperator = allowed.includes(chosenSimpleOp) ? chosenSimpleOp : '+';
+    const safeTarget = clampTarget(
+      chosenTarget,
+      chosenMathMode === 'simple' && safeOp === '×'
+    );
+
+    saveMathMode(chosenMathMode);
+    saveSimpleOperator(safeOp);
+    saveTarget(safeTarget);
+
     const soloSettings: FreePlaySettings = {
       ...freePlaySettingsRef.current,
       dropSpeed: preset.dropSpeed,
@@ -1010,7 +1116,8 @@ export default function App() {
       ceilingHeight: preset.ceilingHeight,
       speedIncreaseRate: preset.speedIncreaseRate,
       mathMode: chosenMathMode,
-      target: chosenTarget,
+      simpleOperator: safeOp,
+      target: safeTarget,
       timeLimit: chosenPractice ? 0 : roundSeconds,
       isPractice: chosenPractice,
       speedIncreaseEnabled: true,
@@ -1023,7 +1130,8 @@ export default function App() {
       spawnIntervalMs: preset.spawnIntervalMs,
       dynamicPace: true,
       mathMode: chosenMathMode,
-      target: chosenTarget,
+      simpleOperator: safeOp,
+      target: safeTarget,
       isPractice: chosenPractice,
     });
   };
@@ -1031,32 +1139,52 @@ export default function App() {
   // Classroom Match Start
   const handleStartClassroomMatch = (config: ClassroomConfig) => {
     const preset = DIFFICULTY_PRESETS[difficultyRef.current];
+    const allowed = getAllowedOperators(difficultyRef.current);
+    const safeOp: MathOperator = allowed.includes(config.simpleOperator)
+      ? config.simpleOperator
+      : '+';
+    const safeTarget = clampTarget(
+      config.target,
+      config.mathMode === 'simple' && safeOp === '×'
+    );
+    const normalizedConfig: ClassroomConfig = {
+      ...config,
+      simpleOperator: safeOp,
+      target: safeTarget,
+    };
+
     handleUpdateFreePlaySettings({
       ...freePlaySettingsRef.current,
       dropSpeed: preset.dropSpeed,
       tileRadius: preset.tileRadius,
       ceilingHeight: preset.ceilingHeight,
       speedIncreaseRate: preset.speedIncreaseRate,
-      mathMode: config.mathMode,
-      target: config.target,
+      mathMode: normalizedConfig.mathMode,
+      simpleOperator: normalizedConfig.simpleOperator,
+      target: normalizedConfig.target,
       isPractice: false,
     });
     spawnIntervalRef.current = preset.spawnIntervalMs;
-    setMathMode(config.mathMode);
-    mathModeRef.current = config.mathMode;
-    setTarget(config.target);
-    targetRef.current = config.target;
+    setMathMode(normalizedConfig.mathMode);
+    mathModeRef.current = normalizedConfig.mathMode;
+    setSimpleOperator(normalizedConfig.simpleOperator);
+    simpleOperatorRef.current = normalizedConfig.simpleOperator;
+    setTarget(normalizedConfig.target);
+    targetRef.current = normalizedConfig.target;
+    saveMathMode(normalizedConfig.mathMode);
+    saveSimpleOperator(normalizedConfig.simpleOperator);
+    saveTarget(normalizedConfig.target);
     setIsPractice(false);
     isPracticeRef.current = false;
 
     const initialState: ClassroomMatchState = {
-      config,
+      config: normalizedConfig,
       currentTeamIndex: 0,
       currentRound: 1,
       isMatchFinished: false,
       turnEquationsCount: 0,
       turnScoreGained: 0,
-      turnTimeLeft: config.turnSeconds,
+      turnTimeLeft: normalizedConfig.turnSeconds,
       lastTurnSummary: null,
     };
 
@@ -1078,6 +1206,8 @@ export default function App() {
 
     setMathMode(cur.config.mathMode);
     mathModeRef.current = cur.config.mathMode;
+    setSimpleOperator(cur.config.simpleOperator);
+    simpleOperatorRef.current = cur.config.simpleOperator;
     setTarget(cur.config.target);
     targetRef.current = cur.config.target;
     setIsPractice(false);
@@ -1095,7 +1225,6 @@ export default function App() {
       fallingTilesRef.current = [];
       setFallingTiles([]);
       setSelectedTiles([]);
-      setSimpleOperators([]);
       setFloatingScores([]);
       setPulsingTileIds(new Set());
       setHintTileIds(new Set());
@@ -1117,7 +1246,6 @@ export default function App() {
       turnTimeLeft: cur.config.turnSeconds,
     });
 
-    setActiveSimpleOperator('+');
     setErrorMessage(null);
     setIsShaking(false);
     lastTimeRef.current = performance.now();
@@ -1177,13 +1305,6 @@ export default function App() {
       triggerTilePulse(tile.id);
 
       setSelectedTiles((prev) => prev.filter((_, i) => i !== idx));
-      if (mathModeRef.current === 'simple') {
-        setSimpleOperators((prev) => {
-          if (prev.length === 0) return prev;
-          const removeOpIdx = idx === 0 ? 0 : idx - 1;
-          return prev.filter((_, i) => i !== removeOpIdx);
-        });
-      }
       setErrorMessage(null);
     },
     [markUserInput, selectedTiles, triggerTilePulse]
@@ -1212,9 +1333,6 @@ export default function App() {
         return;
       }
       soundManager.playSelect();
-      if (selectedTiles.length >= 1) {
-        setSimpleOperators((prev) => [...prev, activeSimpleOperator]);
-      }
       setSelectedTiles((prev) => [...prev, tile]);
     } else {
       const nextNumCount =
@@ -1238,19 +1356,8 @@ export default function App() {
     soundManager.playDeselect();
     selectedTiles.forEach((t) => triggerTilePulse(t.id));
     setSelectedTiles([]);
-    setSimpleOperators([]);
     setErrorMessage(null);
   }, [markUserInput, selectedTiles, triggerTilePulse]);
-
-  const handleSelectSimpleOperator = useCallback(
-    (op: MathOperator) => {
-      markUserInput();
-      if (!getAllowedOperators(difficultyRef.current).includes(op)) return;
-      setActiveSimpleOperator(op);
-      setErrorMessage(null);
-    },
-    [markUserInput]
-  );
 
   const bumpPaceOnEquation = () => {
     if (
@@ -1289,7 +1396,9 @@ export default function App() {
 
     if (activeMath === 'simple') {
       const nums = selectedTiles.map((t) => t.tile.numValue ?? 0);
-      const ops = simpleOperators.slice(0, Math.max(0, nums.length - 1));
+      const ops = new Array<MathOperator>(Math.max(0, nums.length - 1)).fill(
+        simpleOperatorRef.current
+      );
       eqString = formatEquationString(nums, ops);
       numberCount = nums.length;
       evalRes = evaluateEquation(nums, ops, {
@@ -1318,7 +1427,6 @@ export default function App() {
       );
       // Clear selection on failure per spec
       setSelectedTiles([]);
-      setSimpleOperators([]);
       setTimeout(() => setIsShaking(false), 400);
       return;
     }
@@ -1419,7 +1527,6 @@ export default function App() {
     setFrozenTiles([...frozenTilesRef.current]);
     setFallingTiles([...fallingTilesRef.current]);
     setSelectedTiles([]);
-    setSimpleOperators([]);
     setErrorMessage(null);
 
     const prefersReducedMotion =
@@ -1483,12 +1590,6 @@ export default function App() {
       } else if (e.key.toLowerCase() === 'p') {
         e.preventDefault();
         setScreen('PAUSED');
-      } else if (mathModeRef.current === 'simple') {
-        const op = normalizeOperatorKey(e.key);
-        if (op && getAllowedOperators(difficultyRef.current).includes(op)) {
-          e.preventDefault();
-          handleSelectSimpleOperator(op);
-        }
       }
     };
 
@@ -1697,6 +1798,10 @@ export default function App() {
           onChangeDifficulty={handleChangeDifficulty}
           mathMode={mathMode}
           onChangeMathMode={handleChangeMathMode}
+          simpleOperator={simpleOperator}
+          onChangeSimpleOperator={handleChangeSimpleOperator}
+          target={target}
+          onChangeTarget={handleChangeTarget}
         />
       )}
 
@@ -1707,6 +1812,8 @@ export default function App() {
         onStartSolo={handleStartNamedSolo}
         difficulty={difficulty}
         defaultMathMode={mathMode}
+        defaultSimpleOperator={simpleOperator}
+        defaultTarget={target}
         isWide={viewMode === 'wide'}
       />
 
@@ -1720,6 +1827,8 @@ export default function App() {
         }}
         difficulty={difficulty}
         defaultMathMode={mathMode}
+        defaultSimpleOperator={simpleOperator}
+        defaultTarget={target}
         isWide={viewMode === 'wide'}
       />
 
@@ -1804,6 +1913,7 @@ export default function App() {
             onOpenHowToPlay={() => setIsHowToPlayOpen(true)}
             target={target}
             mathMode={mathMode}
+            simpleOperator={simpleOperator}
             classroomMatch={classroomMatch}
             onOpenScoreboard={() => setIsClassroomScoreboardOpen(true)}
             soloPlayer={currentSoloPlayer}
@@ -1811,9 +1921,7 @@ export default function App() {
 
           <WordBar
             selectedTiles={selectedTiles}
-            simpleOperators={simpleOperators}
-            activeSimpleOperator={activeSimpleOperator}
-            onSelectSimpleOperator={handleSelectSimpleOperator}
+            simpleOperator={simpleOperator}
             mathMode={mathMode}
             difficulty={difficulty}
             target={target}
@@ -1822,7 +1930,6 @@ export default function App() {
             onRemoveTile={handleRemoveTile}
             isShaking={isShaking}
             errorMessage={errorMessage}
-            isWide={viewMode === 'wide'}
             lastFoundEquation={equationHistory[equationHistory.length - 1] ?? null}
           />
 
@@ -1906,6 +2013,7 @@ export default function App() {
           isPractice={isPractice}
           target={target}
           mathMode={mathMode}
+          operator={mathMode === 'operator' ? 'mixed' : simpleOperator}
           onNewGame={() => {
             if (currentSoloPlayer) {
               const preset = DIFFICULTY_PRESETS[difficultyRef.current];

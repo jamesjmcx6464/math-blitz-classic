@@ -46,7 +46,7 @@ export const TurnTransitionModal: React.FC<TurnTransitionModalProps> = ({
         {/* Top Banner */}
         <div className="py-2.5 px-4 bg-slate-950/80 border-b border-slate-800 text-xs sm:text-sm font-display font-black uppercase tracking-widest text-slate-400">
           Round {currentRound} of {config.totalRounds} · Make {config.target} ·{' '}
-          {config.mathMode === 'operator' ? 'Operator (2×)' : 'Simple'}
+          {config.mathMode === 'operator' ? 'Operator (2×)' : `Simple (${config.simpleOperator})`}
         </div>
 
         <div className="p-5 sm:p-7 space-y-6">

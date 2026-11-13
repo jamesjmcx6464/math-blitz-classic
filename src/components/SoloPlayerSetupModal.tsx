@@ -19,8 +19,20 @@ import {
   getClaimedLogos,
   RegisteredPlayer,
 } from '../utils/registeredPlayers';
-import { DifficultyLevel, DIFFICULTY_PRESETS, MathMode } from '../types/game';
+import {
+  DifficultyLevel,
+  DIFFICULTY_PRESETS,
+  MathMode,
+  MathOperator,
+} from '../types/game';
 import { TargetPicker } from './TargetPicker';
+import { SimpleOperatorPicker } from './SimpleOperatorPicker';
+import {
+  clampTarget,
+  getAllowedOperators,
+  isCompositeTarget,
+  nearestCompositeTarget,
+} from '../utils/mathEngine';
 
 interface SoloPlayerSetupModalProps {
   isOpen: boolean;
@@ -29,12 +41,15 @@ interface SoloPlayerSetupModalProps {
     playerName: string,
     playerLogo: string,
     mathMode: MathMode,
+    simpleOperator: MathOperator,
     target: number,
     roundSeconds: number,
     isPractice: boolean
   ) => void;
   difficulty: DifficultyLevel;
   defaultMathMode: MathMode;
+  defaultSimpleOperator: MathOperator;
+  defaultTarget: number;
   isWide: boolean;
 }
 
@@ -52,6 +67,8 @@ export const SoloPlayerSetupModal: React.FC<SoloPlayerSetupModalProps> = ({
   onStartSolo,
   difficulty,
   defaultMathMode,
+  defaultSimpleOperator,
+  defaultTarget,
   isWide,
 }) => {
   const [registeredPlayers, setRegisteredPlayers] = useState<RegisteredPlayer[]>([]);
@@ -64,9 +81,8 @@ export const SoloPlayerSetupModal: React.FC<SoloPlayerSetupModalProps> = ({
     'all' | 'animals' | 'space' | 'sports' | 'gems'
   >('all');
   const [mathMode, setMathMode] = useState<MathMode>(defaultMathMode);
-  const [target, setTarget] = useState<number>(
-    DIFFICULTY_PRESETS[difficulty].targetRange.defaultTarget
-  );
+  const [simpleOperator, setSimpleOperator] = useState<MathOperator>(defaultSimpleOperator);
+  const [target, setTarget] = useState<number>(clampTarget(defaultTarget));
   const [roundSeconds, setRoundSeconds] = useState<number>(180);
   const [isPractice, setIsPractice] = useState<boolean>(false);
 
@@ -95,11 +111,13 @@ export const SoloPlayerSetupModal: React.FC<SoloPlayerSetupModalProps> = ({
       setSelectedLogo('');
       setSelectedCategory('all');
       setMathMode(defaultMathMode);
-      setTarget(DIFFICULTY_PRESETS[difficulty].targetRange.defaultTarget);
+      const allowed = getAllowedOperators(difficulty);
+      setSimpleOperator(allowed.includes(defaultSimpleOperator) ? defaultSimpleOperator : '+');
+      setTarget(clampTarget(defaultTarget));
       setRoundSeconds(180);
       setIsPractice(false);
     }
-  }, [isOpen, difficulty, defaultMathMode]);
+  }, [isOpen, difficulty, defaultMathMode, defaultSimpleOperator, defaultTarget]);
 
   const claimedMap = useMemo(() => {
     return getClaimedLogos();
@@ -115,7 +133,16 @@ export const SoloPlayerSetupModal: React.FC<SoloPlayerSetupModalProps> = ({
   const isExistingMode = !isAddingNew && selectedExistingPlayer !== null;
   const activeName = isExistingMode ? selectedExistingPlayer.name : playerName.trim();
   const activeLogo = isExistingMode ? selectedExistingPlayer.logo : selectedLogo;
-  const isFormValid = activeName.length > 0 && activeLogo.length > 0;
+  const requiresComposite = mathMode === 'simple' && simpleOperator === '×';
+  const isBlockedPrime = requiresComposite && !isCompositeTarget(target);
+  const isFormValid = activeName.length > 0 && activeLogo.length > 0 && !isBlockedPrime;
+
+  const handleChangeSimpleOperator = (op: MathOperator) => {
+    setSimpleOperator(op);
+    if (op === '×' && !isCompositeTarget(target)) {
+      setTarget(nearestCompositeTarget(target));
+    }
+  };
 
   const handleCarouselMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
     const el = carouselRef.current;
@@ -175,7 +202,8 @@ export const SoloPlayerSetupModal: React.FC<SoloPlayerSetupModalProps> = ({
       registered.name,
       registered.logo,
       mathMode,
-      target,
+      simpleOperator,
+      clampTarget(target, requiresComposite),
       isPractice ? 0 : roundSeconds,
       isPractice
     );
@@ -383,7 +411,9 @@ export const SoloPlayerSetupModal: React.FC<SoloPlayerSetupModalProps> = ({
                     <button
                       key={cat.id}
                       type="button"
-                      onClick={() => setSelectedCategory(cat.id as 'all' | 'animals' | 'space' | 'sports' | 'gems')}
+                      onClick={() =>
+                        setSelectedCategory(cat.id as 'all' | 'animals' | 'space' | 'sports' | 'gems')
+                      }
                       className={`min-h-[44px] px-3 py-1.5 rounded-xl font-bold text-xs shrink-0 transition-colors cursor-pointer ${
                         selectedCategory === cat.id
                           ? 'bg-amber-400 text-slate-950 shadow-sm'
@@ -446,9 +476,9 @@ export const SoloPlayerSetupModal: React.FC<SoloPlayerSetupModalProps> = ({
             </>
           )}
 
-          {/* 3. Math Mode & Target */}
+          {/* 3. Math Mode, Pre-Game Operator & Target */}
           <div className="space-y-4 pt-3 border-t border-slate-800">
-            <div className="space-y-1.5">
+            <div className="space-y-2.5">
               <label className="font-display font-black text-xs uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
                 <Calculator className="w-3.5 h-3.5 text-sky-400" />
                 <span>Math Mode</span>
@@ -463,7 +493,7 @@ export const SoloPlayerSetupModal: React.FC<SoloPlayerSetupModalProps> = ({
                       : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
                   }`}
                 >
-                  Simple (Numbers only)
+                  Simple (Auto Op)
                 </button>
                 <button
                   type="button"
@@ -477,12 +507,21 @@ export const SoloPlayerSetupModal: React.FC<SoloPlayerSetupModalProps> = ({
                   Operator (2× score)
                 </button>
               </div>
+
+              {mathMode === 'simple' && (
+                <SimpleOperatorPicker
+                  difficulty={difficulty}
+                  value={simpleOperator}
+                  onChange={handleChangeSimpleOperator}
+                />
+              )}
             </div>
 
             <TargetPicker
               difficulty={difficulty}
               target={target}
               onChangeTarget={setTarget}
+              requiresComposite={requiresComposite}
             />
 
             {/* Timer & Practice */}
@@ -539,6 +578,8 @@ export const SoloPlayerSetupModal: React.FC<SoloPlayerSetupModalProps> = ({
               <span className="text-amber-400 font-medium">Select a player or enter your name</span>
             ) : !activeLogo ? (
               <span className="text-amber-400 font-medium">Please pick a logo</span>
+            ) : isBlockedPrime ? (
+              <span className="text-amber-400 font-medium">Pick a composite target for ×</span>
             ) : (
               <span className="text-emerald-400 font-bold flex items-center gap-1">
                 <Check className="w-4 h-4 stroke-[3]" /> Ready as {activeLogo} {activeName}!

@@ -19,6 +19,7 @@ import {
   ClassroomTeam,
   DifficultyLevel,
   MathMode,
+  MathOperator,
   TurnConditionType,
 } from '../types/game';
 import {
@@ -28,8 +29,14 @@ import {
   saveClassroomConfig,
   loadClassroomConfig,
 } from '../utils/classroomStorage';
-import { clampTarget } from '../utils/mathEngine';
+import {
+  clampTarget,
+  getAllowedOperators,
+  isCompositeTarget,
+  nearestCompositeTarget,
+} from '../utils/mathEngine';
 import { TargetPicker } from './TargetPicker';
+import { SimpleOperatorPicker } from './SimpleOperatorPicker';
 
 interface PlayNowModalProps {
   isOpen: boolean;
@@ -37,6 +44,8 @@ interface PlayNowModalProps {
   onLaunchTeamMatch: (config: ClassroomConfig) => void;
   difficulty: DifficultyLevel;
   defaultMathMode: MathMode;
+  defaultSimpleOperator: MathOperator;
+  defaultTarget: number;
   isWide: boolean;
 }
 
@@ -46,6 +55,8 @@ export const PlayNowModal: React.FC<PlayNowModalProps> = ({
   onLaunchTeamMatch,
   difficulty,
   defaultMathMode,
+  defaultSimpleOperator,
+  defaultTarget,
   isWide,
 }) => {
   const [step, setStep] = useState<'team_setup' | 'math_setup'>('team_setup');
@@ -66,9 +77,8 @@ export const PlayNowModal: React.FC<PlayNowModalProps> = ({
     () => classroomConfig.cleanBoardEachTurn
   );
   const [mathMode, setMathMode] = useState<MathMode>(defaultMathMode);
-  const [target, setTarget] = useState<number>(() =>
-    clampTarget(difficulty, classroomConfig.target)
-  );
+  const [simpleOperator, setSimpleOperator] = useState<MathOperator>(defaultSimpleOperator);
+  const [target, setTarget] = useState<number>(() => clampTarget(defaultTarget));
   const [spawnSeed, setSpawnSeed] = useState<number>(() => classroomConfig.spawnSeed);
   const [activeTheme, setActiveTheme] = useState<'animals' | 'colors' | 'space' | 'all'>(
     'animals'
@@ -85,13 +95,25 @@ export const PlayNowModal: React.FC<PlayNowModalProps> = ({
       setTotalRounds(fresh.totalRounds);
       setCleanBoardEachTurn(fresh.cleanBoardEachTurn);
       setMathMode(defaultMathMode);
-      setTarget(clampTarget(difficulty, fresh.target));
+      const allowed = getAllowedOperators(difficulty);
+      setSimpleOperator(allowed.includes(defaultSimpleOperator) ? defaultSimpleOperator : '+');
+      setTarget(clampTarget(defaultTarget));
       setSpawnSeed(fresh.spawnSeed || Math.floor(100000 + Math.random() * 900000));
       setStep('team_setup');
     }
-  }, [isOpen, difficulty, defaultMathMode]);
+  }, [isOpen, difficulty, defaultMathMode, defaultSimpleOperator, defaultTarget]);
 
   if (!isOpen) return null;
+
+  const requiresComposite = mathMode === 'simple' && simpleOperator === '×';
+  const isBlockedPrime = requiresComposite && !isCompositeTarget(target);
+
+  const handleChangeSimpleOperator = (op: MathOperator) => {
+    setSimpleOperator(op);
+    if (op === '×' && !isCompositeTarget(target)) {
+      setTarget(nearestCompositeTarget(target));
+    }
+  };
 
   const buildUpdatedConfig = (): ClassroomConfig => ({
     ...classroomConfig,
@@ -108,7 +130,8 @@ export const PlayNowModal: React.FC<PlayNowModalProps> = ({
     totalRounds,
     cleanBoardEachTurn,
     mathMode,
-    target: clampTarget(difficulty, target),
+    simpleOperator,
+    target: clampTarget(target, requiresComposite),
     spawnSeed: Math.max(1, Math.round(spawnSeed) || 104729),
   });
 
@@ -120,6 +143,7 @@ export const PlayNowModal: React.FC<PlayNowModalProps> = ({
   };
 
   const handleLaunch = () => {
+    if (isBlockedPrime) return;
     const finalConfig = buildUpdatedConfig();
     saveClassroomConfig(finalConfig);
     onLaunchTeamMatch(finalConfig);
@@ -504,11 +528,11 @@ export const PlayNowModal: React.FC<PlayNowModalProps> = ({
               </div>
 
               <p className="text-xs font-medium text-slate-400">
-                All teams share the same target, math mode, and spawn seed on every round.
+                All teams share the same target, operator, math mode, and spawn seed on every round.
               </p>
 
-              {/* Math Mode */}
-              <div className="space-y-2">
+              {/* Math Mode + Pre-Game Operator */}
+              <div className="space-y-2.5">
                 <label className="font-display font-black text-xs uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
                   <Calculator className="w-4 h-4 text-sky-400" />
                   <span>Shared Math Mode</span>
@@ -524,7 +548,7 @@ export const PlayNowModal: React.FC<PlayNowModalProps> = ({
                     }`}
                   >
                     <span className="font-display font-black text-base block">Simple Mode</span>
-                    <span className="text-xs text-slate-400">Numbers fall · op selector</span>
+                    <span className="text-xs text-slate-400">Numbers fall · auto operator</span>
                   </button>
                   <button
                     type="button"
@@ -539,6 +563,14 @@ export const PlayNowModal: React.FC<PlayNowModalProps> = ({
                     <span className="text-xs text-violet-300">Ops fall on board (2× score)</span>
                   </button>
                 </div>
+
+                {mathMode === 'simple' && (
+                  <SimpleOperatorPicker
+                    difficulty={difficulty}
+                    value={simpleOperator}
+                    onChange={handleChangeSimpleOperator}
+                  />
+                )}
               </div>
 
               {/* Shared Target */}
@@ -546,6 +578,7 @@ export const PlayNowModal: React.FC<PlayNowModalProps> = ({
                 difficulty={difficulty}
                 target={target}
                 onChangeTarget={setTarget}
+                requiresComposite={requiresComposite}
               />
 
               {/* Shared Spawn Seed */}
@@ -582,8 +615,13 @@ export const PlayNowModal: React.FC<PlayNowModalProps> = ({
               <div className="pt-2">
                 <button
                   type="button"
+                  disabled={isBlockedPrime}
                   onClick={handleLaunch}
-                  className="w-full min-h-[56px] sm:min-h-[60px] px-6 rounded-2xl font-display font-black text-lg sm:text-xl flex items-center justify-center gap-2.5 shadow-xl transition-all cursor-pointer active:scale-[0.98] bg-gradient-to-r from-indigo-500 via-indigo-600 to-purple-600 hover:from-indigo-400 hover:to-purple-500 text-white shadow-indigo-500/25"
+                  className={`w-full min-h-[56px] sm:min-h-[60px] px-6 rounded-2xl font-display font-black text-lg sm:text-xl flex items-center justify-center gap-2.5 shadow-xl transition-all ${
+                    isBlockedPrime
+                      ? 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed'
+                      : 'cursor-pointer active:scale-[0.98] bg-gradient-to-r from-indigo-500 via-indigo-600 to-purple-600 hover:from-indigo-400 hover:to-purple-500 text-white shadow-indigo-500/25'
+                  }`}
                 >
                   <Play className="w-5 h-5 fill-current" />
                   <span>Start Team Match!</span>

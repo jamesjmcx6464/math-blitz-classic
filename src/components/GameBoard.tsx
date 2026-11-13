@@ -84,10 +84,12 @@ export const GameBoard: React.FC<GameBoardProps> = ({
 
   const isPhone = viewMode === 'narrow' || (typeof window !== 'undefined' && window.innerWidth < 640);
 
-  // Scaled for tileRadius (default HEX_RADIUS = 28) — shrink font for "10" so it fits cleanly
+  // Scaled for tileRadius (default HEX_RADIUS = 28) — shrink font for 2/3/4-digit numbers so they fit cleanly
   const scale = tileRadius / 28;
   const singleCharFontSize = (isPhone ? 17.5 * scale : 24.0 * scale).toFixed(1);
   const twoCharFontSize = (isPhone ? 13.8 * scale : 19.0 * scale).toFixed(1);
+  const threeCharFontSize = (isPhone ? 10.6 * scale : 14.5 * scale).toFixed(1);
+  const fourCharFontSize = (isPhone ? 8.8 * scale : 12.0 * scale).toFixed(1);
   const operatorFontSize = (isPhone ? 20.5 * scale : 27.5 * scale).toFixed(1);
 
   const uniqueFrozenTiles = React.useMemo(() => {
@@ -274,9 +276,14 @@ export const GameBoard: React.FC<GameBoardProps> = ({
       filterEffect = 'url(#tileShadow)';
     }
 
+    const charLen = tile.tile.display.length;
     const fontSize = isOperator
       ? operatorFontSize
-      : tile.tile.display.length > 1
+      : charLen >= 4
+      ? fourCharFontSize
+      : charLen === 3
+      ? threeCharFontSize
+      : charLen === 2
       ? twoCharFontSize
       : singleCharFontSize;
 

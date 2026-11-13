@@ -1,10 +1,19 @@
-import { DifficultyLevel, LeaderboardMode, MathMode, TargetBand } from '../types/game';
+import {
+  DEFAULT_TARGET,
+  DifficultyLevel,
+  LeaderboardMode,
+  LeaderboardOperator,
+  MathMode,
+  MathOperator,
+  TargetBand,
+} from '../types/game';
 import { getTargetBand } from './mathEngine';
 
 export interface HighScoreEntry {
   id: string;
   mode: LeaderboardMode;
   mathMode: MathMode;
+  operator: LeaderboardOperator; // '+' | '−' | '×' | '÷' for simple mode, 'mixed' for operator mode
   timeBucket: string; // e.g. 'time:60', 'time:120', 'time:180', 'time:300', 'equations:3'
   timeSeconds?: number;
   difficulty: DifficultyLevel;
@@ -21,6 +30,14 @@ export interface HighScoreEntry {
 
 const STORAGE_KEY = 'math_blitz_high_scores_v1';
 const MAX_ENTRIES_PER_BUCKET = 30;
+
+export function formatOperatorLabel(op: LeaderboardOperator): string {
+  if (op === 'mixed') return 'Mixed (+−×÷)';
+  if (op === '+') return '+ Add';
+  if (op === '−') return '− Sub';
+  if (op === '×') return '× Mul';
+  return '÷ Div';
+}
 
 export function makeTimeBucketKey(kind: 'timer' | 'equations', value: number): string {
   const safeVal = Number.isFinite(value) && value >= 0 ? Math.round(value) : 180;
@@ -76,6 +93,10 @@ function isValidDifficulty(val: unknown): val is DifficultyLevel {
   );
 }
 
+function isValidOperator(val: unknown): val is LeaderboardOperator {
+  return val === '+' || val === '−' || val === '×' || val === '÷' || val === 'mixed';
+}
+
 function isValidTargetBand(val: unknown): val is TargetBand {
   return (
     val === '10' ||
@@ -88,12 +109,21 @@ function isValidTargetBand(val: unknown): val is TargetBand {
 }
 
 function getBucketKey(e: HighScoreEntry): string {
-  return `${e.mode}::${e.mathMode}::${e.timeBucket}::${e.difficulty}::${e.targetBand}`;
+  return `${e.mode}::${e.mathMode}::${e.operator}::${e.target}::${e.timeBucket}::${e.difficulty}`;
 }
 
 function migrateEntry(raw: Record<string, unknown>): HighScoreEntry | null {
   const mode: LeaderboardMode = isValidMode(raw.mode) ? raw.mode : 'quick';
   const mathMode: MathMode = raw.mathMode === 'operator' ? 'operator' : 'simple';
+  const operator: LeaderboardOperator = isValidOperator(raw.operator)
+    ? mathMode === 'operator'
+      ? 'mixed'
+      : raw.operator === 'mixed'
+      ? '+'
+      : raw.operator
+    : mathMode === 'operator'
+    ? 'mixed'
+    : '+';
   const difficulty: DifficultyLevel = isValidDifficulty(raw.difficulty) ? raw.difficulty : 'normal';
   const rawTimeBucket = typeof raw.timeBucket === 'string' ? raw.timeBucket : 'time:60';
   const timeSeconds =
@@ -104,9 +134,9 @@ function migrateEntry(raw: Record<string, unknown>): HighScoreEntry | null {
       : undefined;
 
   const target =
-    typeof raw.target === 'number' && Number.isFinite(raw.target) && raw.target > 0
+    typeof raw.target === 'number' && Number.isFinite(raw.target) && raw.target >= 2
       ? Math.round(raw.target)
-      : 10;
+      : DEFAULT_TARGET;
   const targetBand: TargetBand = isValidTargetBand(raw.targetBand)
     ? raw.targetBand
     : getTargetBand(target, mode === 'quick');
@@ -118,6 +148,7 @@ function migrateEntry(raw: Record<string, unknown>): HighScoreEntry | null {
         : 'score_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
     mode,
     mathMode,
+    operator,
     timeBucket: rawTimeBucket,
     timeSeconds,
     difficulty,
@@ -200,6 +231,7 @@ export function getClaimedSoloScoreLogos(): Map<string, string> {
 export interface SaveHighScoreParams {
   mode: LeaderboardMode;
   mathMode: MathMode;
+  simpleOperator?: MathOperator;
   timeBucket: string;
   timeSeconds?: number;
   difficulty: DifficultyLevel;
@@ -219,6 +251,7 @@ export function saveHighScore(
   const {
     mode,
     mathMode,
+    simpleOperator = '+',
     timeBucket,
     timeSeconds,
     difficulty,
@@ -242,12 +275,14 @@ export function saveHighScore(
     return { isNewHighScore: false, rank: -1 };
   }
 
+  const operator: LeaderboardOperator = mathMode === 'operator' ? 'mixed' : simpleOperator;
   const targetBand = getTargetBand(target, mode === 'quick');
   const scores = getHighScores();
   const entry: HighScoreEntry = {
     id: 'score_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
     mode,
     mathMode,
+    operator,
     timeBucket,
     timeSeconds,
     difficulty,
@@ -280,9 +315,10 @@ export function saveHighScore(
       (s) =>
         s.mode === mode &&
         s.mathMode === mathMode &&
+        s.operator === operator &&
+        s.target === target &&
         s.timeBucket === timeBucket &&
-        s.difficulty === difficulty &&
-        s.targetBand === targetBand
+        s.difficulty === difficulty
     )
     .sort((a, b) => b.score - a.score || b.timestamp - a.timestamp);
 

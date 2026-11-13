@@ -17,6 +17,7 @@ import {
   ClassroomTeam,
   DifficultyLevel,
   MathMode,
+  MathOperator,
   TurnConditionType,
 } from '../types/game';
 import {
@@ -25,8 +26,14 @@ import {
   createDefaultTeam,
   saveClassroomConfig,
 } from '../utils/classroomStorage';
-import { clampTarget } from '../utils/mathEngine';
+import {
+  clampTarget,
+  getAllowedOperators,
+  isCompositeTarget,
+  nearestCompositeTarget,
+} from '../utils/mathEngine';
 import { TargetPicker } from './TargetPicker';
+import { SimpleOperatorPicker } from './SimpleOperatorPicker';
 
 interface ClassroomSetupModalProps {
   initialConfig: ClassroomConfig;
@@ -54,11 +61,25 @@ export const ClassroomSetupModal: React.FC<ClassroomSetupModalProps> = ({
     initialConfig.cleanBoardEachTurn
   );
   const [mathMode, setMathMode] = useState<MathMode>(initialConfig.mathMode);
-  const [target, setTarget] = useState<number>(() => clampTarget(difficulty, initialConfig.target));
+  const [simpleOperator, setSimpleOperator] = useState<MathOperator>(() => {
+    const allowed = getAllowedOperators(difficulty);
+    return allowed.includes(initialConfig.simpleOperator) ? initialConfig.simpleOperator : '+';
+  });
+  const [target, setTarget] = useState<number>(() => clampTarget(initialConfig.target));
   const [spawnSeed, setSpawnSeed] = useState<number>(
     initialConfig.spawnSeed || Math.floor(100000 + Math.random() * 900000)
   );
   const [activeTheme, setActiveTheme] = useState<'animals' | 'colors' | 'space' | 'all'>('animals');
+
+  const requiresComposite = mathMode === 'simple' && simpleOperator === '×';
+  const isBlockedPrime = requiresComposite && !isCompositeTarget(target);
+
+  const handleChangeSimpleOperator = (op: MathOperator) => {
+    setSimpleOperator(op);
+    if (op === '×' && !isCompositeTarget(target)) {
+      setTarget(nearestCompositeTarget(target));
+    }
+  };
 
   const handleApplyPreset = (presetType: 'animals' | 'colors' | 'space' | 'all') => {
     setActiveTheme(presetType);
@@ -138,6 +159,7 @@ export const ClassroomSetupModal: React.FC<ClassroomSetupModalProps> = ({
   };
 
   const handleStart = () => {
+    if (isBlockedPrime) return;
     const finalConfig: ClassroomConfig = {
       teams: teams.map((t) => ({
         ...t,
@@ -152,7 +174,8 @@ export const ClassroomSetupModal: React.FC<ClassroomSetupModalProps> = ({
       totalRounds,
       cleanBoardEachTurn,
       mathMode,
-      target: clampTarget(difficulty, target),
+      simpleOperator,
+      target: clampTarget(target, requiresComposite),
       spawnSeed: Math.max(1, Math.round(spawnSeed) || 104729),
     };
 
@@ -178,7 +201,7 @@ export const ClassroomSetupModal: React.FC<ClassroomSetupModalProps> = ({
                 Classroom Team Match
               </h2>
               <p className="text-xs sm:text-sm text-indigo-300/90 font-medium">
-                Shared target, mode &amp; spawn seed across all teams
+                Shared target, operator, mode &amp; spawn seed across all teams
               </p>
             </div>
           </div>
@@ -290,7 +313,7 @@ export const ClassroomSetupModal: React.FC<ClassroomSetupModalProps> = ({
             )}
           </div>
 
-          {/* Section 2: Shared Math Mode & Target */}
+          {/* Section 2: Shared Math Mode, Operator & Target */}
           <div className="space-y-3 pt-2 border-t border-slate-800">
             <label className="font-display font-black text-sm uppercase tracking-wider text-slate-300 flex items-center gap-2">
               <Calculator className="w-4 h-4 text-sky-400" />
@@ -322,7 +345,20 @@ export const ClassroomSetupModal: React.FC<ClassroomSetupModalProps> = ({
               </button>
             </div>
 
-            <TargetPicker difficulty={difficulty} target={target} onChangeTarget={setTarget} />
+            {mathMode === 'simple' && (
+              <SimpleOperatorPicker
+                difficulty={difficulty}
+                value={simpleOperator}
+                onChange={handleChangeSimpleOperator}
+              />
+            )}
+
+            <TargetPicker
+              difficulty={difficulty}
+              target={target}
+              onChangeTarget={setTarget}
+              requiresComposite={requiresComposite}
+            />
 
             <div className="p-3.5 rounded-2xl bg-slate-950/70 border border-slate-800 flex items-center justify-between gap-3">
               <div>
@@ -511,8 +547,13 @@ export const ClassroomSetupModal: React.FC<ClassroomSetupModalProps> = ({
 
           <button
             type="button"
+            disabled={isBlockedPrime}
             onClick={handleStart}
-            className="flex-1 min-h-[52px] px-6 rounded-2xl bg-gradient-to-r from-indigo-500 via-indigo-600 to-purple-600 hover:from-indigo-400 hover:to-purple-500 text-white font-display font-black text-base sm:text-lg flex items-center justify-center gap-2 shadow-xl shadow-indigo-500/25 active:scale-95 transition-all cursor-pointer"
+            className={`flex-1 min-h-[52px] px-6 rounded-2xl font-display font-black text-base sm:text-lg flex items-center justify-center gap-2 shadow-xl transition-all ${
+              isBlockedPrime
+                ? 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed'
+                : 'bg-gradient-to-r from-indigo-500 via-indigo-600 to-purple-600 hover:from-indigo-400 hover:to-purple-500 text-white shadow-indigo-500/25 active:scale-95 cursor-pointer'
+            }`}
           >
             <Play className="w-5 h-5 fill-current" />
             <span>Start Classroom Match!</span>

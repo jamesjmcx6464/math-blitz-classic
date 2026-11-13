@@ -6,17 +6,12 @@ import {
   MathOperator,
   DifficultyLevel,
 } from '../types/game';
-import {
-  evaluateLivePreview,
-  getAllowedOperators,
-} from '../utils/mathEngine';
+import { evaluateLivePreview } from '../utils/mathEngine';
 import { Check, RotateCcw, Delete } from 'lucide-react';
 
 interface WordBarProps {
   selectedTiles: HexTile[];
-  simpleOperators: MathOperator[];
-  activeSimpleOperator: MathOperator;
-  onSelectSimpleOperator: (op: MathOperator) => void;
+  simpleOperator: MathOperator;
   mathMode: MathMode;
   difficulty: DifficultyLevel;
   target: number;
@@ -25,43 +20,28 @@ interface WordBarProps {
   onRemoveTile: (tile: HexTile) => void;
   isShaking: boolean;
   errorMessage: string | null;
-  isWide?: boolean;
   lastFoundEquation?: EquationEntry | null;
 }
 
 const PRAISES = ['Nice!', 'Great math!', 'Spot on!', 'Sharp!', 'Awesome!'];
 
-const OP_KEY_HINTS: Record<MathOperator, string> = {
-  '+': '+',
-  '−': '-',
-  '×': '*',
-  '÷': '/',
+const OP_BADGE_STYLES: Record<MathOperator, string> = {
+  '+': 'bg-emerald-500/20 text-emerald-300 border-emerald-400/50',
+  '−': 'bg-rose-500/20 text-rose-300 border-rose-400/50',
+  '×': 'bg-violet-500/20 text-violet-300 border-violet-400/50',
+  '÷': 'bg-orange-500/20 text-orange-300 border-orange-400/50',
 };
 
-const OP_BUTTON_STYLES: Record<MathOperator, { active: string; idle: string }> = {
-  '+': {
-    active: 'bg-emerald-500 text-slate-950 border-emerald-300 shadow-md shadow-emerald-500/25',
-    idle: 'bg-slate-800 hover:bg-slate-700 text-emerald-300 border-slate-700',
-  },
-  '−': {
-    active: 'bg-rose-500 text-white border-rose-300 shadow-md shadow-rose-500/25',
-    idle: 'bg-slate-800 hover:bg-slate-700 text-rose-300 border-slate-700',
-  },
-  '×': {
-    active: 'bg-violet-500 text-white border-violet-300 shadow-md shadow-violet-500/25',
-    idle: 'bg-slate-800 hover:bg-slate-700 text-violet-300 border-slate-700',
-  },
-  '÷': {
-    active: 'bg-orange-500 text-slate-950 border-orange-300 shadow-md shadow-orange-500/25',
-    idle: 'bg-slate-800 hover:bg-slate-700 text-orange-300 border-slate-700',
-  },
+const OP_NAMES: Record<MathOperator, string> = {
+  '+': 'Addition',
+  '−': 'Subtraction',
+  '×': 'Multiplication',
+  '÷': 'Division',
 };
 
 export const WordBar: React.FC<WordBarProps> = ({
   selectedTiles,
-  simpleOperators,
-  activeSimpleOperator,
-  onSelectSimpleOperator,
+  simpleOperator,
   mathMode,
   difficulty,
   target,
@@ -70,18 +50,15 @@ export const WordBar: React.FC<WordBarProps> = ({
   onRemoveTile,
   isShaking,
   errorMessage,
-  isWide = false,
   lastFoundEquation = null,
 }) => {
-  const allowedOps = useMemo(() => getAllowedOperators(difficulty), [difficulty]);
-
   // Extract numbers and operators from current selection
   const { nums, ops, hasSyntaxMismatch } = useMemo(() => {
     if (mathMode === 'simple') {
       const n = selectedTiles.map((t) => t.tile.numValue ?? 0);
       return {
         nums: n,
-        ops: simpleOperators.slice(0, Math.max(0, n.length - 1)),
+        ops: new Array<MathOperator>(Math.max(0, n.length - 1)).fill(simpleOperator),
         hasSyntaxMismatch: false,
       };
     }
@@ -100,7 +77,7 @@ export const WordBar: React.FC<WordBarProps> = ({
       }
     }
     return { nums: n, ops: o, hasSyntaxMismatch: mismatch };
-  }, [mathMode, selectedTiles, simpleOperators]);
+  }, [mathMode, selectedTiles, simpleOperator]);
 
   const preview = useMemo(() => {
     if (hasSyntaxMismatch) {
@@ -145,7 +122,9 @@ export const WordBar: React.FC<WordBarProps> = ({
     if (lastFoundEquation && lastFoundEquation.id !== lastFoundIdRef.current) {
       lastFoundIdRef.current = lastFoundEquation.id;
       const praise = PRAISES[Math.floor(Math.random() * PRAISES.length)];
-      setSuccessMessage(`${praise} ${lastFoundEquation.equation} = ${lastFoundEquation.target} (+${lastFoundEquation.score})`);
+      setSuccessMessage(
+        `${praise} ${lastFoundEquation.equation} = ${lastFoundEquation.target} (+${lastFoundEquation.score})`
+      );
       const timer = setTimeout(() => setSuccessMessage(null), 2200);
       return () => clearTimeout(timer);
     }
@@ -175,7 +154,7 @@ export const WordBar: React.FC<WordBarProps> = ({
     const observer = new ResizeObserver(computeScale);
     if (containerRef.current) observer.observe(containerRef.current);
     return () => observer.disconnect();
-  }, [selectedTiles, simpleOperators, activeSimpleOperator]);
+  }, [selectedTiles, simpleOperator]);
 
   const renderEquationTokens = () => {
     if (mathMode === 'simple') {
@@ -241,10 +220,9 @@ export const WordBar: React.FC<WordBarProps> = ({
                 );
               })}
 
-              {/* Pending next operator indicator in Simple mode */}
               {selectedTiles.length > 0 && selectedTiles.length < 6 && (
                 <span className="ml-1 px-1.5 py-0.5 rounded-lg bg-slate-800/80 border border-dashed border-slate-600 text-slate-400 font-mono font-black text-sm">
-                  {activeSimpleOperator} ?
+                  {simpleOperator} ?
                 </span>
               )}
             </div>
@@ -275,7 +253,8 @@ export const WordBar: React.FC<WordBarProps> = ({
               const isNum = tile.tile.kind === 'number';
               const numIdx = Math.floor(idx / 2);
               const opIdx = Math.floor((idx - 1) / 2);
-              const isUnderlined = !hasSyntaxMismatch && (isNum ? isInMulDivGroup(numIdx) : isOpInMulDivGroup(opIdx));
+              const isUnderlined =
+                !hasSyntaxMismatch && (isNum ? isInMulDivGroup(numIdx) : isOpInMulDivGroup(opIdx));
               const isNegStep = !hasSyntaxMismatch && isNum && preview.negativeNumIndices.has(numIdx);
 
               return (
@@ -340,7 +319,7 @@ export const WordBar: React.FC<WordBarProps> = ({
       return (
         <span className="text-slate-400 text-xs sm:text-sm font-medium truncate max-w-full leading-tight">
           {mathMode === 'simple'
-            ? `Tap numbers to make ${target}`
+            ? `Tap numbers (${simpleOperator} auto-inserted) to make ${target}`
             : `Tap number, operator, number to make ${target}`}
         </span>
       );
@@ -398,41 +377,6 @@ export const WordBar: React.FC<WordBarProps> = ({
           <span>=</span>
           <span>{res === null ? '?' : res}</span>
         </div>
-      </div>
-    );
-  };
-
-  const renderSimpleOperatorSelector = () => {
-    if (mathMode !== 'simple') return null;
-
-    return (
-      <div className="flex items-center gap-1.5">
-        <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400 hidden sm:inline mr-1">
-          Next op:
-        </span>
-        {allowedOps.map((op) => {
-          const isActive = activeSimpleOperator === op;
-          const style = OP_BUTTON_STYLES[op];
-          return (
-            <button
-              key={op}
-              type="button"
-              onClick={() => onSelectSimpleOperator(op)}
-              aria-label={`Select operator ${op} (key ${OP_KEY_HINTS[op]})`}
-              aria-pressed={isActive}
-              className={`min-w-[44px] min-h-[44px] px-3 rounded-xl border-2 font-display font-black text-xl flex items-center justify-center gap-1 transition-all cursor-pointer active:scale-95 ${
-                isActive ? style.active : style.idle
-              }`}
-            >
-              <span>{op}</span>
-              {isWide && (
-                <span className="text-[10px] font-mono opacity-70 hidden md:inline">
-                  {OP_KEY_HINTS[op]}
-                </span>
-              )}
-            </button>
-          );
-        })}
       </div>
     );
   };
@@ -497,7 +441,6 @@ export const WordBar: React.FC<WordBarProps> = ({
 
   return (
     <div className="w-full mx-auto px-1 sm:px-2 mb-1 flex flex-col gap-1.5 shrink-0 select-none">
-      {/* Main Equation Tray */}
       <div className="bg-slate-900/90 border-2 border-slate-800 rounded-2xl px-2.5 sm:px-3 py-1.5 flex flex-col gap-1.5 shadow-md">
         {/* Top Row: Target + Live Result + Equation Strip */}
         <div className="flex items-center justify-between gap-2 min-h-[48px]">
@@ -511,8 +454,8 @@ export const WordBar: React.FC<WordBarProps> = ({
                 <span className="w-8 h-9 rounded-lg border-2 border-dashed border-slate-800 flex items-center justify-center text-xs font-bold">
                   _
                 </span>
-                <span className="text-xs font-bold text-slate-600">
-                  {activeSimpleOperator}
+                <span className="text-xs font-bold text-slate-500 font-mono">
+                  {mathMode === 'simple' ? simpleOperator : 'op'}
                 </span>
                 <span className="w-8 h-9 rounded-lg border-2 border-dashed border-slate-800 flex items-center justify-center text-xs font-bold">
                   _
@@ -527,11 +470,16 @@ export const WordBar: React.FC<WordBarProps> = ({
           {renderMessage()}
         </div>
 
-        {/* Controls Row: Simple Operator Selector + Backspace / Clear / Enter */}
+        {/* Controls Row: Read-only Auto Operator Indicator (or Operator Mode badge) + Backspace / Clear / Enter */}
         <div className="flex flex-col sm:flex-row items-center justify-between gap-1.5 pt-1 border-t border-slate-800/80">
           {mathMode === 'simple' ? (
-            <div className="w-full sm:w-auto flex items-center justify-center sm:justify-start">
-              {renderSimpleOperatorSelector()}
+            <div className="flex items-center gap-2 shrink-0">
+              <span
+                className={`px-2.5 py-1 rounded-xl border text-xs font-bold flex items-center gap-1.5 ${OP_BADGE_STYLES[simpleOperator]}`}
+              >
+                <span className="font-mono font-black text-base leading-none">{simpleOperator}</span>
+                <span>{OP_NAMES[simpleOperator]}</span>
+              </span>
             </div>
           ) : (
             <span className="text-xs font-semibold text-sky-300 hidden sm:inline">

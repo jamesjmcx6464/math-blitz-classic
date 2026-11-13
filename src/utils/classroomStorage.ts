@@ -1,4 +1,11 @@
-import { ClassroomConfig, ClassroomTeam } from '../types/game';
+import {
+  ClassroomConfig,
+  ClassroomTeam,
+  DEFAULT_TARGET,
+  MAX_TARGET,
+  MathOperator,
+  MIN_TARGET,
+} from '../types/game';
 
 export const TEAM_COLOR_PALETTES = [
   {
@@ -114,11 +121,13 @@ export const DEFAULT_CLASSROOM_CONFIG: ClassroomConfig = {
   totalRounds: 3,
   cleanBoardEachTurn: true,
   mathMode: 'simple',
-  target: 24,
+  simpleOperator: '+',
+  target: DEFAULT_TARGET,
   spawnSeed: 104729,
 };
 
 const STORAGE_KEY_CLASSROOM_CONFIG = 'mathblitz_classroom_config';
+const VALID_OPS: MathOperator[] = ['+', '−', '×', '÷'];
 
 export function loadClassroomConfig(): ClassroomConfig {
   try {
@@ -126,12 +135,20 @@ export function loadClassroomConfig(): ClassroomConfig {
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed.teams) && parsed.teams.length >= 2) {
+        const op: MathOperator = VALID_OPS.includes(parsed.simpleOperator)
+          ? parsed.simpleOperator
+          : '+';
+        const targetVal =
+          typeof parsed.target === 'number' && Number.isFinite(parsed.target)
+            ? Math.max(MIN_TARGET, Math.min(MAX_TARGET, Math.round(parsed.target)))
+            : DEFAULT_TARGET;
         return {
           ...DEFAULT_CLASSROOM_CONFIG,
           ...parsed,
           turnCondition: parsed.turnCondition === 'equations' ? 'equations' : 'timer',
           mathMode: parsed.mathMode === 'operator' ? 'operator' : 'simple',
-          target: typeof parsed.target === 'number' && parsed.target > 0 ? parsed.target : 24,
+          simpleOperator: op,
+          target: targetVal,
           spawnSeed:
             typeof parsed.spawnSeed === 'number' && parsed.spawnSeed > 0
               ? parsed.spawnSeed
